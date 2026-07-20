@@ -43,10 +43,10 @@ images of each other, and both come from ignoring the reader's actual level:
   judgment. (Write to it like it's an idiot and it will execute like one.)
 
 Same root error both times: not modeling the reader's real capability. A deterministic
-interpreter genuinely is literal — that reader you skip. (The current user in live chat
-you also skip — not because they are literal, but because ordinary conversational
-judgment already covers them. The description above carries the full exclusion list.)
-Every reader outside those exclusions, human or LLM, infers and fills gaps, so model it.
+interpreter genuinely is literal, so you skip it. (You also skip the current user in
+live chat — not because they are literal, but because ordinary conversational judgment
+already covers them. The description above carries the full exclusion list.) Every
+reader outside those exclusions, human or LLM, infers and fills gaps, so model it.
 
 ## 1. Run this in your thinking — never in the output
 
