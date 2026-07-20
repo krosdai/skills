@@ -11,11 +11,12 @@ description: >-
   through. It makes you model the reader's real capability and what they will
   infer or assume, then emit only the calibrated artifact. Do NOT apply to:
   in-chat replies addressed to the current user (answers, explanations,
-  summaries, status updates — however substantial), unless the user will paste
-  or send them onward, which makes that recipient the reader; text the user
-  dictates verbatim; git commit messages; output consumed literally by a
-  deterministic interpreter (executed code, configs, schemas, queries, regexes,
-  test fixtures) — no mind to model.
+  summaries, status updates — however substantial), unless the user signals
+  the text is destined for someone else ("to send to my manager", "to paste
+  into Slack") — then that recipient is the reader and the skill applies; text
+  the user dictates verbatim; git commit messages; output consumed literally
+  by a deterministic interpreter (executed code, configs, schemas, queries,
+  regexes, test fixtures) — no mind to model.
 ---
 
 # Audience-Aware Communication
@@ -45,7 +46,7 @@ Same root error both times: not modeling the reader's real capability. A determi
 interpreter genuinely is literal — that reader you skip. (The current user in live chat
 you also skip — not because they are literal, but because ordinary conversational
 judgment already covers them. The description above carries the full exclusion list.)
-Every other reader, human or LLM, infers and fills gaps, so model it.
+Every reader outside those exclusions, human or LLM, infers and fills gaps, so model it.
 
 ## 1. Run this in your thinking — never in the output
 
