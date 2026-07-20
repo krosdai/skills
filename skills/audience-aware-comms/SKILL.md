@@ -10,11 +10,12 @@ description: >-
   feature, a subagent prompt) — that is where audience-blind writing slips
   through. It makes you model the reader's real capability and what they will
   infer or assume, then emit only the calibrated artifact. Do NOT apply to:
-  conversational replies to the current user (answers, explanations, in-chat
-  summaries, status updates — however substantial); text the user dictates
-  verbatim; git commit messages; output consumed literally by a deterministic
-  interpreter (executed code, configs, schemas, queries, regexes, test
-  fixtures) — no mind to model.
+  in-chat replies addressed to the current user (answers, explanations,
+  summaries, status updates — however substantial), unless the user will paste
+  or send them onward, which makes that recipient the reader; text the user
+  dictates verbatim; git commit messages; output consumed literally by a
+  deterministic interpreter (executed code, configs, schemas, queries, regexes,
+  test fixtures) — no mind to model.
 ---
 
 # Audience-Aware Communication
@@ -22,9 +23,10 @@ description: >-
 The "when to use" lives entirely in the `description` above — that is the trigger.
 By the time you are reading this body, assume you are writing an artifact for a
 reader beyond this conversation and it is consequential. (If on reflection the text
-is just a conversational reply to the current user, or is consumed literally by a
-deterministic interpreter — executed code, a config, a schema, a query — exit
-quietly and respond normally; those cases are out of scope.)
+falls under one of the description's exclusions — an in-chat reply to the current
+user, dictated-verbatim text, a git commit message, or output consumed literally by
+a deterministic interpreter — exit quietly and respond normally; those cases are out
+of scope.)
 
 ## Why this skill exists
 
@@ -41,8 +43,9 @@ images of each other, and both come from ignoring the reader's actual level:
 
 Same root error both times: not modeling the reader's real capability. A deterministic
 interpreter genuinely is literal — that reader you skip. (The current user in live chat
-you also skip, not because they are literal but because ordinary conversational judgment
-already covers them.) Every other reader, human or LLM, infers and fills gaps, so model it.
+you also skip — not because they are literal, but because ordinary conversational
+judgment already covers them. The description above carries the full exclusion list.)
+Every other reader, human or LLM, infers and fills gaps, so model it.
 
 ## 1. Run this in your thinking — never in the output
 
