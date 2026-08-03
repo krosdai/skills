@@ -42,9 +42,14 @@ alternatives per task, never both on the same task.
 
 ```bash
 TASKS=(auth-refresh api-pagination) # one id per independent task
-RUN=$PWD/.runs
+
+# Keep worktrees and logs OUTSIDE the supervised repo — nesting them under it puts every
+# delegate's tree inside your own working tree and pollutes status/ignore rules.
+REPO=$(git rev-parse --show-toplevel)
+RUN=${RUN:-$(dirname "$REPO")/.orchestrate/$(basename "$REPO")}
 LOG=$RUN/logs BRIEFS=$RUN/briefs WORKTREES=$RUN/wt
 mkdir -p "$LOG" "$BRIEFS" "$WORKTREES"
+: > "$LOG/exit-codes" # truncate — otherwise a re-run reports two runs mixed together
 # You write $BRIEFS/<task>.md first — goal, constraints, acceptance criteria, file scope.
 
 # GNU timeout is the budget. macOS ships it as gtimeout via `brew install coreutils`;
@@ -77,7 +82,8 @@ run_codex() { # $1 = task id
 }
 
 run_grok() { # $1 = task id
-  grok -p "$(cat "$BRIEFS/$1.md")" --output-format json \
+  # --max-turns bounds turns, not wall clock — a stalled worker would hang the `wait`.
+  "$TIMEOUT" -k 30s 30m grok -p "$(cat "$BRIEFS/$1.md")" --output-format json \
     --json-schema "$(cat "$RUN/result.schema.json")" --max-turns 40 \
     --permission-mode acceptEdits --cwd "$WORKTREES/$1" \
     < /dev/null > "$LOG/$1.json" 2> "$LOG/$1.err"
