@@ -121,14 +121,21 @@ all — the sandbox mode _is_ the control, and passing `--ask-for-approval` ther
 `unexpected argument` (it exists only on the interactive `codex`). grok's `--permission-mode`
 is a separate axis: `acceptEdits` auto-approves edits and lets other tools follow your
 permission rules, which in a headless `-p` run there is no TTY to answer. It ran non-edit
-shell commands fine in testing, but local permission rules influence that — if a worker
-stalls or quietly skips tests and builds, widen it (`dontAsk`, `bypassPermissions`).
+shell commands fine in testing, but local permission rules influence that. If a worker
+stalls or quietly skips tests and builds, widen it with targeted `--allow` rules first.
+Reach for `bypassPermissions` last and never bare: unlike codex, where `workspace-write`
+still confines writes to the worktree, it drops the gate entirely for an unattended process
+with shell access — a worker that misreads its file scope can reach the sibling worktrees of
+your other parallel tasks. Pair it with `--sandbox` (or `GROK_SANDBOX`) so something is
+still holding the boundary.
 
 **Check the exit status, not just the output.** When `timeout` fires, codex is killed
 mid-stream: the JSONL never reaches `turn.completed` and `-o` is never written, which looks
-identical to a crash or a bad schema path. Only the exit code distinguishes them — 124 when
-SIGTERM did it, 137 when `-k` had to escalate — and the worktree still holds partial,
-uncommitted edits either way.
+identical to a crash or a bad schema path. The exit code is the only signal: 124 when
+SIGTERM ended it, 137 when `-k` escalated to SIGKILL (measured on GNU coreutils 9.4). Do not
+lean too hard on 137 though — an OOM kill or a CI runner reaping the job produces it too.
+Treat any non-zero code as "no usable result", read the `.err` file for the reason, and
+remember the worktree still holds partial, uncommitted edits either way.
 
 Keep stderr in its own file. Both machine-readable outputs are parsed structurally, so
 folding diagnostics into them with `2>&1` corrupts the parse — including the harmless
@@ -206,7 +213,11 @@ these runs fail.
    the new base before reviewing it.
 4. **Hard budgets always** — `--max-turns` on grok, `timeout` plus `turn/interrupt` on
    codex. Unbounded tool chaining is the classic way to burn an afternoon and a quota.
-5. **Pre-flight the quota** via `account/rateLimits/read` before a wide fan-out.
+5. **Pre-flight the budget** before a wide fan-out, by whatever the lane affords. In Lane A
+   that means `codex login status` (subscription quota or metered API key — the two fail
+   very differently) plus grok's `total_cost_usd` from the previous batch. A real quota
+   figure needs `account/rateLimits/read`, which is Lane B; one short app-server handshake
+   gets it without adopting Lane B for the actual work.
 6. **Whoever writes, someone else reviews.** Each model finds more bugs in the other's
    code than its own. Give the reviewer the spec and the diff — strip the implementer's
    own assessment, which measurably softens review depth.
