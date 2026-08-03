@@ -71,12 +71,7 @@ cat > "$RUN/result.schema.json" <<'JSON'
 }
 JSON
 
-have_brief() { # refuse to burn a 30-minute budget on an empty prompt
-  [ -s "$BRIEFS/$1.md" ] || { echo "$1 no-brief" >> "$LOG/exit-codes"; return 1; }
-}
-
 run_codex() { # $1 = task id
-  have_brief "$1" || return
   # codex has no turn cap, so `timeout` is the budget (rule 4). -k reaps a worker that
   # ignores SIGTERM; exit 124 means the budget fired, not that the task failed.
   "$TIMEOUT" -k 30s 30m codex exec --json --sandbox workspace-write \
@@ -87,7 +82,6 @@ run_codex() { # $1 = task id
 }
 
 run_grok() { # $1 = task id
-  have_brief "$1" || return
   # --max-turns bounds turns, not wall clock — a stalled worker would hang the `wait`.
   "$TIMEOUT" -k 30s 30m grok -p "$(cat "$BRIEFS/$1.md")" --output-format json \
     --json-schema "$(cat "$RUN/result.schema.json")" --max-turns 40 \
@@ -97,6 +91,9 @@ run_grok() { # $1 = task id
 }
 
 for t in "${TASKS[@]}"; do
+  # Check the brief BEFORE creating anything, or a missing one leaves an orphaned worktree
+  # that makes every later re-run of this task fail at `add`.
+  [ -s "$BRIEFS/$t.md" ] || { echo "$t no-brief" >> "$LOG/exit-codes"; continue; }
   # Never launch a worker into a tree you failed to create — on a re-run the add fails
   # ("already exists") and an unguarded worker would edit whatever is sitting there.
   git worktree add "$WORKTREES/$t" -b "feat/$t" origin/main || {
@@ -114,11 +111,13 @@ Tear down each task once you have merged or abandoned its branch — otherwise t
 hits `already exists`, skips every task, and looks like a no-op:
 
 ```bash
-git worktree remove "$WORKTREES/$t" && git branch -D "feat/$t"
+git worktree remove "$WORKTREES/$t" && git branch -d "feat/$t"
 ```
 
-Add `--force` only after checking what is uncommitted in there; a dirty tree usually means
-the worker was killed mid-task and the work has not been reviewed yet.
+Lowercase `-d` on purpose: it refuses a branch whose commits are not merged, which is the
+delegate's entire output. Escalate to `-D` only when you mean to throw that work away, and
+to `git worktree remove --force` only after looking at what is uncommitted — a dirty tree
+usually means the worker was killed mid-task and nobody has reviewed it yet.
 
 **codex validates `--output-schema` in strict mode.** Every key in `properties` must also
 appear in `required`, and `additionalProperties` must be `false`. Omit one and the turn dies
