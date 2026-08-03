@@ -21,13 +21,13 @@ bottleneck from typing to reviewing — it does not remove it.
 
 ## Choose the lane
 
-|                 | **Lane A — one process per task**                      | **Lane B — persistent app-server**        |
-| --------------- | ------------------------------------------------------ | ----------------------------------------- |
-| codex           | `codex exec --json`                                    | `codex app-server --stdio` (JSON-RPC 2.0) |
-| grok            | `grok -p --output-format json`                         | `grok agent serve` / leader socket        |
-| Setup           | none — a shell call                                    | ~150-line JSON-RPC client                 |
-| Per-task cost   | reloads full system prompt (~20k tok codex, ~18k grok) | paid once per thread                      |
-| Mid-run control | none: kill and restart, losing context                 | `turn/steer`, `turn/interrupt`            |
+|                 | **Lane A — one process per task**                      | **Lane B — persistent app-server**          |
+| --------------- | ------------------------------------------------------ | ------------------------------------------- |
+| codex           | `codex exec --json`                                    | `codex app-server --stdio` (JSON-RPC-style) |
+| grok            | `grok -p --output-format json`                         | `grok agent serve` / leader socket          |
+| Setup           | none — a shell call                                    | ~150-line JSON-RPC client                   |
+| Per-task cost   | reloads full system prompt (~20k tok codex, ~18k grok) | paid once per thread                        |
+| Mid-run control | none: kill and restart, losing context                 | `turn/steer`, `turn/interrupt`              |
 
 **Default to Lane A.** Reach for Lane B only when you need to correct a running agent
 instead of restarting it, or when short tasks are frequent enough that the system-prompt
@@ -40,14 +40,22 @@ Each task gets its own git worktree and its own log. Launch them as background s
 processes, one per task, then collect results as they land — do not busy-poll.
 
 ```bash
-codex exec --json --sandbox workspace-write --ask-for-approval never \
+mkdir -p "$WT/.agent" "$LOG"
+
+# codex has no turn cap — `timeout` is the budget (rule 4 below).
+timeout 1800 codex exec --json --sandbox workspace-write --ask-for-approval never \
   -C "$WT" --output-schema result.schema.json -o "$WT/.agent/last.txt" \
-  "$(cat brief.md)" < /dev/null > "$LOG/codex-$TASK.jsonl" 2>&1
+  "$(cat brief.md)" < /dev/null \
+  > "$LOG/codex-$TASK.jsonl" 2> "$LOG/codex-$TASK.err"
 
 grok -p "$(cat brief.md)" --output-format json --json-schema "$(cat result.schema.json)" \
   --max-turns 40 --permission-mode acceptEdits --cwd "$WT" \
-  < /dev/null > "$LOG/grok-$TASK.json"
+  < /dev/null > "$LOG/grok-$TASK.json" 2> "$LOG/grok-$TASK.err"
 ```
+
+Keep stderr in its own file. Both machine-readable outputs are parsed structurally, so
+folding diagnostics into them with `2>&1` corrupts the parse — including the harmless
+startup ERROR described under Gotchas.
 
 `< /dev/null` is mandatory. With non-TTY stdin, codex appends whatever it finds as a
 `<stdin>` block on your prompt; a spawned shell inherits stdin, so omitting it silently
@@ -55,7 +63,10 @@ corrupts the brief.
 
 codex JSONL: `thread.started` → `turn.started` → `item.started`/`item.completed` →
 `turn.completed` (carries `usage`); failures as `turn.failed` / `error`. Parse per line.
-`--output-schema` and `-o` compose — stdout stays JSONL, `-o` gets final text.
+`--output-schema` and `-o` compose — stdout stays JSONL, `-o` gets final text. `-C` moves
+the agent's working root but not the CLI's own path resolution: `--output-schema` is read
+relative to the invoking shell, so a bare relative path is correct there while `-o` needs
+an explicit `$WT/` prefix to land inside the worktree.
 
 Also useful: `--ephemeral`, `--add-dir`, `--ignore-user-config` / `--ignore-rules` for
 hermetic runs, `codex exec resume --last`, `grok --worktree=<name> --worktree-ref=<base>`
@@ -64,14 +75,17 @@ plus `grok worktree list|rm|gc`.
 ## Lane B
 
 Lifecycle: `initialize` → `initialized` → `thread/start` → `turn/start` → notifications →
-`turn/completed`. Newline-delimited JSON-RPC 2.0, no `jsonrpc` field.
+`turn/completed`. Newline-delimited JSON-RPC 2.0 request/response/notification shapes, but
+the `jsonrpc: "2.0"` version field is omitted — treat it as JSON-RPC-style framing, not a
+conformant JSON-RPC 2.0 endpoint, and do not send the field yourself.
 
 Generate the protocol from the installed binary rather than trusting any list — it moves
 between releases:
 
 ```bash
 codex app-server generate-json-schema --out ./asproto
-jq -r '.oneOf[] | .properties.method.enum[0]' asproto/ClientRequest.json > methods.txt
+jq -r '.oneOf[]? | .properties?.method?.enum?[0]? // empty' \
+  asproto/ClientRequest.json > methods.txt
 ```
 
 What Lane B uniquely buys: `turn/steer` (inject correction mid-turn), `turn/interrupt`,
