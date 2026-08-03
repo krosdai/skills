@@ -46,7 +46,7 @@ mkdir -p "$LOG"
 run_codex() { # $1 = task id
   # codex has no turn cap, so `timeout` is the budget (rule 4). -k reaps a worker that
   # ignores SIGTERM; exit 124 means the budget fired, not that the task failed.
-  timeout -k 30s 30m codex exec --json --sandbox workspace-write --ask-for-approval never \
+  timeout -k 30s 30m codex exec --json --sandbox workspace-write \
     -C "$WORKTREES/$1" --output-schema result.schema.json -o "$LOG/$1.last.txt" \
     "$(cat "$BRIEFS/$1.md")" < /dev/null \
     > "$LOG/$1.jsonl" 2> "$LOG/$1.err"
@@ -70,6 +70,20 @@ wait
 cat "$LOG/exit-codes" # 0 = finished, 124 = budget fired, 137 = -k escalated, else failure
 ```
 
+**The delegate commits; you review and merge.** Rule 3 assumes each task branch exists when
+its worker exits, so say so in the brief. A linked worktree's `.git` is a gitfile pointing
+into the main repo, but `workspace-write` still permits the commit — verified, no `--add-dir`
+needed. Reach for `--add-dir` only when a task genuinely needs a second writable root; it
+widens access rather than narrowing it.
+
+**Autonomy differs by lane, so set it deliberately.** `codex exec` has no approval flag at
+all — the sandbox mode _is_ the control, and passing `--ask-for-approval` there fails with
+`unexpected argument` (it exists only on the interactive `codex`). grok's `--permission-mode`
+is a separate axis: `acceptEdits` auto-approves edits and lets other tools follow your
+permission rules, which in a headless `-p` run there is no TTY to answer. It ran non-edit
+shell commands fine in testing, but local permission rules influence that — if a worker
+stalls or quietly skips tests and builds, widen it (`dontAsk`, `bypassPermissions`).
+
 **Check the exit status, not just the output.** When `timeout` fires, codex is killed
 mid-stream: the JSONL never reaches `turn.completed` and `-o` is never written, which looks
 identical to a crash or a bad schema path. Only the exit code distinguishes them — 124 when
@@ -92,8 +106,8 @@ the agent's working root but not the CLI's own path resolution: both `--output-s
 worktree — an artifact written inside it leaves the tree dirty, and `git worktree remove`
 then refuses without `--force`.
 
-Also useful: `--ephemeral`, `--add-dir`, `--ignore-user-config` / `--ignore-rules` for
-hermetic runs, `codex exec resume --last`, `grok --worktree=<name> --worktree-ref=<base>`
+Also useful: `--ephemeral` and `--ignore-user-config` / `--ignore-rules` for hermetic runs,
+`codex exec resume --last`, `grok --worktree=<name> --worktree-ref=<base>`
 plus `grok worktree list|rm|gc`.
 
 ## Lane B
