@@ -47,6 +47,11 @@ LOG=$RUN/logs BRIEFS=$RUN/briefs WORKTREES=$RUN/wt
 mkdir -p "$LOG" "$BRIEFS" "$WORKTREES"
 # You write $BRIEFS/<task>.md first — goal, constraints, acceptance criteria, file scope.
 
+# GNU timeout is the budget. macOS ships it as gtimeout via `brew install coreutils`;
+# fail loudly here rather than letting every worker die with a confusing exec error.
+TIMEOUT=$(command -v timeout || command -v gtimeout) ||
+  { echo "no GNU timeout — macOS: brew install coreutils" >&2; exit 1; }
+
 # One result contract, consumed differently: codex takes a path, grok takes the text.
 cat > "$RUN/result.schema.json" <<'JSON'
 {
@@ -64,7 +69,7 @@ JSON
 run_codex() { # $1 = task id
   # codex has no turn cap, so `timeout` is the budget (rule 4). -k reaps a worker that
   # ignores SIGTERM; exit 124 means the budget fired, not that the task failed.
-  timeout -k 30s 30m codex exec --json --sandbox workspace-write \
+  "$TIMEOUT" -k 30s 30m codex exec --json --sandbox workspace-write \
     -C "$WORKTREES/$1" --output-schema "$RUN/result.schema.json" -o "$LOG/$1.last.txt" \
     "$(cat "$BRIEFS/$1.md")" < /dev/null \
     > "$LOG/$1.jsonl" 2> "$LOG/$1.err"
