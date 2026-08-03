@@ -36,22 +36,45 @@ left half-broken.
 
 ## Lane A
 
-Each task gets its own git worktree and its own log. Launch them as background shell
-processes, one per task, then collect results as they land — do not busy-poll.
+One task = one worktree, one brief, one log, and exactly **one** worker. Two agents in the
+same worktree is the collision rule 1 exists to prevent, so codex and grok below are
+alternatives per task, never both on the same task.
 
 ```bash
-mkdir -p "$WT/.agent" "$LOG"
+mkdir -p "$LOG"
 
-# codex has no turn cap — `timeout` is the budget (rule 4 below).
-timeout 1800 codex exec --json --sandbox workspace-write --ask-for-approval never \
-  -C "$WT" --output-schema result.schema.json -o "$WT/.agent/last.txt" \
-  "$(cat brief.md)" < /dev/null \
-  > "$LOG/codex-$TASK.jsonl" 2> "$LOG/codex-$TASK.err"
+run_codex() { # $1 = task id
+  # codex has no turn cap, so `timeout` is the budget (rule 4). -k reaps a worker that
+  # ignores SIGTERM; exit 124 means the budget fired, not that the task failed.
+  timeout -k 30s 30m codex exec --json --sandbox workspace-write --ask-for-approval never \
+    -C "$WORKTREES/$1" --output-schema result.schema.json -o "$LOG/$1.last.txt" \
+    "$(cat "$BRIEFS/$1.md")" < /dev/null \
+    > "$LOG/$1.jsonl" 2> "$LOG/$1.err"
+  echo "$1 $?" >> "$LOG/exit-codes"
+}
 
-grok -p "$(cat brief.md)" --output-format json --json-schema "$(cat result.schema.json)" \
-  --max-turns 40 --permission-mode acceptEdits --cwd "$WT" \
-  < /dev/null > "$LOG/grok-$TASK.json" 2> "$LOG/grok-$TASK.err"
+run_grok() { # $1 = task id
+  grok -p "$(cat "$BRIEFS/$1.md")" --output-format json \
+    --json-schema "$(cat result.schema.json)" --max-turns 40 \
+    --permission-mode acceptEdits --cwd "$WORKTREES/$1" \
+    < /dev/null > "$LOG/$1.json" 2> "$LOG/$1.err"
+  echo "$1 $?" >> "$LOG/exit-codes"
+}
+
+for t in "${TASKS[@]}"; do
+  git worktree add "$WORKTREES/$t" -b "feat/$t" origin/main
+  run_codex "$t" & # or run_grok "$t" — pick one per task
+done
+wait
+
+cat "$LOG/exit-codes" # 0 = finished, 124 = budget fired, 137 = -k escalated, else failure
 ```
+
+**Check the exit status, not just the output.** When `timeout` fires, codex is killed
+mid-stream: the JSONL never reaches `turn.completed` and `-o` is never written, which looks
+identical to a crash or a bad schema path. Only the exit code distinguishes them — 124 when
+SIGTERM did it, 137 when `-k` had to escalate — and the worktree still holds partial,
+uncommitted edits either way.
 
 Keep stderr in its own file. Both machine-readable outputs are parsed structurally, so
 folding diagnostics into them with `2>&1` corrupts the parse — including the harmless
@@ -64,9 +87,10 @@ corrupts the brief.
 codex JSONL: `thread.started` → `turn.started` → `item.started`/`item.completed` →
 `turn.completed` (carries `usage`); failures as `turn.failed` / `error`. Parse per line.
 `--output-schema` and `-o` compose — stdout stays JSONL, `-o` gets final text. `-C` moves
-the agent's working root but not the CLI's own path resolution: `--output-schema` is read
-relative to the invoking shell, so a bare relative path is correct there while `-o` needs
-an explicit `$WT/` prefix to land inside the worktree.
+the agent's working root but not the CLI's own path resolution: both `--output-schema` and
+`-o` are resolved against the invoking shell. Keep `-o` pointed at `$LOG`, outside the
+worktree — an artifact written inside it leaves the tree dirty, and `git worktree remove`
+then refuses without `--force`.
 
 Also useful: `--ephemeral`, `--add-dir`, `--ignore-user-config` / `--ignore-rules` for
 hermetic runs, `codex exec resume --last`, `grok --worktree=<name> --worktree-ref=<base>`
@@ -103,8 +127,10 @@ assuming N× throughput.
 
 ## Who gets what
 
-- **codex** — well-specified repo-local implementation. Subscription-priced, so wide
-  fan-out spends quota rather than cash. No turn cap: bound it with `timeout` externally.
+- **codex** — well-specified repo-local implementation. No turn cap: bound it with
+  `timeout` externally. Check the auth mode before sizing a fan-out: a ChatGPT-logged-in
+  session spends subscription quota, but `codex login --with-api-key` bills metered API
+  usage, so the same fan-out becomes cash. `codex login status` tells you which.
 - **grok** — bounded mechanical breadth: tests, repetitive multi-file edits, exploration.
   `--max-turns` gives a hard budget, and its JSON reports `total_cost_usd`. Metered, so
   watch the number.
@@ -147,5 +173,6 @@ these runs fail.
 - The three CLIs may already share global instructions (`~/.codex/AGENTS.md`,
   `~/.claude/CLAUDE.md`); `grok inspect` shows exactly what grok resolved. What is usually
   missing is a **repo-level** `AGENTS.md` — without one, delegates fly blind on project
-  constraints. Adding it is the highest-leverage move before delegating in an unfamiliar
-  repo.
+  constraints. In an unfamiliar repo this is the highest-leverage thing to fix first, but
+  rule 7 still holds: surface the gap and ask the human to write it. Do not author it
+  yourself, and do not let a delegate do it either.
