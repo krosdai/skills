@@ -50,6 +50,9 @@ RUN=${RUN:-$(dirname "$REPO")/.orchestrate/$(basename "$REPO")}
 LOG=$RUN/logs BRIEFS=$RUN/briefs WORKTREES=$RUN/wt
 mkdir -p "$LOG" "$BRIEFS" "$WORKTREES"
 : > "$LOG/exit-codes" # truncate — otherwise a re-run reports two runs mixed together
+
+git fetch -q origin # branch off current upstream, not whatever origin/main was last sync
+BASE=${BASE:-origin/main} # override where the default branch is named something else
 # You write $BRIEFS/<task>.md first — goal, constraints, acceptance criteria, file scope.
 
 # GNU timeout is the budget. macOS ships it as gtimeout via `brew install coreutils`;
@@ -91,12 +94,15 @@ run_grok() { # $1 = task id
 }
 
 for t in "${TASKS[@]}"; do
+  # Drop last run's artifacts for this task, or a skip leaves stale results that read as
+  # this run's — the same trap the exit-codes truncation above avoids.
+  rm -f "$LOG/$t".{jsonl,json,err,last.txt}
   # Check the brief BEFORE creating anything, or a missing one leaves an orphaned worktree
   # that makes every later re-run of this task fail at `add`.
   [ -s "$BRIEFS/$t.md" ] || { echo "$t no-brief" >> "$LOG/exit-codes"; continue; }
   # Never launch a worker into a tree you failed to create — on a re-run the add fails
   # ("already exists") and an unguarded worker would edit whatever is sitting there.
-  git worktree add "$WORKTREES/$t" -b "feat/$t" origin/main || {
+  git worktree add "$WORKTREES/$t" -b "feat/$t" "$BASE" || {
     echo "$t skipped-no-worktree" >> "$LOG/exit-codes"
     continue
   }
