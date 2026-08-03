@@ -51,8 +51,11 @@ LOG=$RUN/logs BRIEFS=$RUN/briefs WORKTREES=$RUN/wt
 mkdir -p "$LOG" "$BRIEFS" "$WORKTREES"
 : > "$LOG/exit-codes" # truncate — otherwise a re-run reports two runs mixed together
 
-git fetch -q origin # branch off current upstream, not whatever origin/main was last sync
-BASE=${BASE:-origin/main} # override where the default branch is named something else
+# Branch off current upstream, and prove the base exists — an unresolvable ref would fail
+# every `worktree add` and the run would look like a no-op instead of a misconfiguration.
+git fetch -q origin || { echo "cannot fetch origin" >&2; exit 1; }
+BASE=${BASE:-origin/main} # set BASE= where the default branch is not main
+git rev-parse --verify -q "$BASE" >/dev/null || { echo "base '$BASE' not found" >&2; exit 1; }
 # You write $BRIEFS/<task>.md first — goal, constraints, acceptance criteria, file scope.
 
 # GNU timeout is the budget. macOS ships it as gtimeout via `brew install coreutils`;
@@ -116,14 +119,20 @@ cat "$LOG/exit-codes" # 0 = finished, 124 = budget fired, 137 = -k escalated, el
 Tear down each task once you have merged or abandoned its branch — otherwise the next run
 hits `already exists`, skips every task, and looks like a no-op:
 
+**The branch has to go too, not just the worktree** — `worktree add -b` fails on an existing
+branch, so a surviving `feat/$t` no-ops that task on every future run. Which delete you use
+says what you decided:
+
 ```bash
-git worktree remove "$WORKTREES/$t" && git branch -d "feat/$t"
+git worktree remove "$WORKTREES/$t"
+git branch -d "feat/$t"   # merged: -d refuses if it isn't, which is the point
+git branch -D "feat/$t"   # abandoned: you are deliberately discarding the work
 ```
 
-Lowercase `-d` on purpose: it refuses a branch whose commits are not merged, which is the
-delegate's entire output. Escalate to `-D` only when you mean to throw that work away, and
-to `git worktree remove --force` only after looking at what is uncommitted — a dirty tree
-usually means the worker was killed mid-task and nobody has reviewed it yet.
+Lowercase `-d` guards the delegate's entire output, so a refusal means "this was never
+merged", not "the command is broken". Use `git worktree remove --force` only after looking
+at what is uncommitted — a dirty tree usually means the worker was killed mid-task and
+nobody has reviewed it yet.
 
 **codex validates `--output-schema` in strict mode.** Every key in `properties` must also
 appear in `required`, and `additionalProperties` must be `false`. Omit one and the turn dies
