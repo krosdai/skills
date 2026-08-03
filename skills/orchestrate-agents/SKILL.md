@@ -71,7 +71,12 @@ cat > "$RUN/result.schema.json" <<'JSON'
 }
 JSON
 
+have_brief() { # refuse to burn a 30-minute budget on an empty prompt
+  [ -s "$BRIEFS/$1.md" ] || { echo "$1 no-brief" >> "$LOG/exit-codes"; return 1; }
+}
+
 run_codex() { # $1 = task id
+  have_brief "$1" || return
   # codex has no turn cap, so `timeout` is the budget (rule 4). -k reaps a worker that
   # ignores SIGTERM; exit 124 means the budget fired, not that the task failed.
   "$TIMEOUT" -k 30s 30m codex exec --json --sandbox workspace-write \
@@ -82,6 +87,7 @@ run_codex() { # $1 = task id
 }
 
 run_grok() { # $1 = task id
+  have_brief "$1" || return
   # --max-turns bounds turns, not wall clock — a stalled worker would hang the `wait`.
   "$TIMEOUT" -k 30s 30m grok -p "$(cat "$BRIEFS/$1.md")" --output-format json \
     --json-schema "$(cat "$RUN/result.schema.json")" --max-turns 40 \
@@ -103,6 +109,16 @@ wait
 
 cat "$LOG/exit-codes" # 0 = finished, 124 = budget fired, 137 = -k escalated, else failure
 ```
+
+Tear down each task once you have merged or abandoned its branch — otherwise the next run
+hits `already exists`, skips every task, and looks like a no-op:
+
+```bash
+git worktree remove "$WORKTREES/$t" && git branch -D "feat/$t"
+```
+
+Add `--force` only after checking what is uncommitted in there; a dirty tree usually means
+the worker was killed mid-task and the work has not been reviewed yet.
 
 **codex validates `--output-schema` in strict mode.** Every key in `properties` must also
 appear in `required`, and `additionalProperties` must be `false`. Omit one and the turn dies
