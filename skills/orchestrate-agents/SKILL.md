@@ -41,13 +41,31 @@ same worktree is the collision rule 1 exists to prevent, so codex and grok below
 alternatives per task, never both on the same task.
 
 ```bash
-mkdir -p "$LOG"
+TASKS=(auth-refresh api-pagination) # one id per independent task
+RUN=$PWD/.runs
+LOG=$RUN/logs BRIEFS=$RUN/briefs WORKTREES=$RUN/wt
+mkdir -p "$LOG" "$BRIEFS" "$WORKTREES"
+# You write $BRIEFS/<task>.md first — goal, constraints, acceptance criteria, file scope.
+
+# One result contract, consumed differently: codex takes a path, grok takes the text.
+cat > "$RUN/result.schema.json" <<'JSON'
+{
+  "type": "object",
+  "properties": {
+    "summary": { "type": "string" },
+    "committed": { "type": "boolean" },
+    "files_changed": { "type": "array", "items": { "type": "string" } }
+  },
+  "required": ["summary", "committed", "files_changed"],
+  "additionalProperties": false
+}
+JSON
 
 run_codex() { # $1 = task id
   # codex has no turn cap, so `timeout` is the budget (rule 4). -k reaps a worker that
   # ignores SIGTERM; exit 124 means the budget fired, not that the task failed.
   timeout -k 30s 30m codex exec --json --sandbox workspace-write \
-    -C "$WORKTREES/$1" --output-schema result.schema.json -o "$LOG/$1.last.txt" \
+    -C "$WORKTREES/$1" --output-schema "$RUN/result.schema.json" -o "$LOG/$1.last.txt" \
     "$(cat "$BRIEFS/$1.md")" < /dev/null \
     > "$LOG/$1.jsonl" 2> "$LOG/$1.err"
   echo "$1 $?" >> "$LOG/exit-codes"
@@ -55,20 +73,31 @@ run_codex() { # $1 = task id
 
 run_grok() { # $1 = task id
   grok -p "$(cat "$BRIEFS/$1.md")" --output-format json \
-    --json-schema "$(cat result.schema.json)" --max-turns 40 \
+    --json-schema "$(cat "$RUN/result.schema.json")" --max-turns 40 \
     --permission-mode acceptEdits --cwd "$WORKTREES/$1" \
     < /dev/null > "$LOG/$1.json" 2> "$LOG/$1.err"
   echo "$1 $?" >> "$LOG/exit-codes"
 }
 
 for t in "${TASKS[@]}"; do
-  git worktree add "$WORKTREES/$t" -b "feat/$t" origin/main
+  # Never launch a worker into a tree you failed to create — on a re-run the add fails
+  # ("already exists") and an unguarded worker would edit whatever is sitting there.
+  git worktree add "$WORKTREES/$t" -b "feat/$t" origin/main || {
+    echo "$t skipped-no-worktree" >> "$LOG/exit-codes"
+    continue
+  }
   run_codex "$t" & # or run_grok "$t" — pick one per task
 done
 wait
 
 cat "$LOG/exit-codes" # 0 = finished, 124 = budget fired, 137 = -k escalated, else failure
 ```
+
+**codex validates `--output-schema` in strict mode.** Every key in `properties` must also
+appear in `required`, and `additionalProperties` must be `false`. Omit one and the turn dies
+with `invalid_json_schema` before any work happens — the run fails fast, but only the stderr
+file and a `turn.failed` event say why. Model optional fields as nullable types, not as
+absent-from-`required`.
 
 **The delegate commits; you review and merge.** Rule 3 assumes each task branch exists when
 its worker exits, so say so in the brief. A linked worktree's `.git` is a gitfile pointing
