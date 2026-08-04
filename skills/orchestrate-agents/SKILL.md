@@ -63,6 +63,11 @@ git rev-parse --verify -q "$BASE" >/dev/null || { echo "base '$BASE' not found" 
 TIMEOUT=$(command -v timeout || command -v gtimeout) ||
   { echo "no GNU timeout — macOS: brew install coreutils" >&2; exit 1; }
 
+# CODEX_HOME picks which codex account the fan-out spends, and nothing else does. Workers
+# inherit your environment, so naming it here is how you keep a wide run off the wrong
+# profile's quota. See "Which codex account pays" below.
+export CODEX_HOME=${CODEX_HOME:-$HOME/.codex}
+
 # One result contract, consumed differently: codex takes a path, grok takes the text.
 cat > "$RUN/result.schema.json" <<'JSON'
 {
@@ -160,6 +165,17 @@ with shell access — a worker that misreads its file scope can reach the siblin
 your other parallel tasks. Pair it with `--sandbox` (or `GROK_SANDBOX`) so something is
 still holding the boundary.
 
+**Which codex account pays is `CODEX_HOME`, and only `CODEX_HOME`.** No CLI flag selects it:
+`-p/--profile` layers `$CODEX_HOME/<name>.config.toml`, which switches _config_ and never
+credentials — even `--ignore-user-config` keeps reading auth from `CODEX_HOME`. Where several
+profiles are logged in on one machine, `codex login status` cannot tell them apart: it prints
+the same `Logged in using ChatGPT` for every profile directory, and stays silent about an
+`OPENAI_API_KEY` sitting in the environment — which applies no matter which profile you chose,
+so a fan-out you believe is spending subscription quota can be billing metered API instead.
+`codex doctor` is what discloses this, warning `mixed auth signals` and breaking out `auth env
+vars present`, `stored auth mode`, and `reachability mode`. Pin `CODEX_HOME` per run rather
+than trusting whatever the supervising shell inherited.
+
 **Check the exit status, not just the output.** When `timeout` fires, codex is killed
 mid-stream: the JSONL never reaches `turn.completed` and `-o` is never written, which looks
 identical to a crash or a bad schema path. The exit code is the only signal: 124 when
@@ -237,6 +253,10 @@ running with `--dangerously-bypass-*`.
 `thread/start` takes per-thread `cwd`, `sandbox`, `model`, `baseInstructions`,
 `ephemeral`; `turn/start` takes per-turn `cwd`, `model`, `effort`, `outputSchema`.
 
+Neither takes an account: auth comes from the process's `CODEX_HOME`, so one server is one
+profile, and a fan-out across profiles needs a server each. The `initialize` response echoes
+`codexHome` back, which is the cheapest way to assert you attached to the one you meant.
+
 One process does run threads concurrently, but with contention — four threads were
 observed overlapping cleanly yet finishing non-linearly. Measure your own workload before
 assuming N× throughput.
@@ -245,8 +265,10 @@ assuming N× throughput.
 
 - **codex** — well-specified repo-local implementation. No turn cap: bound it with
   `timeout` externally. Check the auth mode before sizing a fan-out: a ChatGPT-logged-in
-  session spends subscription quota, but `codex login --with-api-key` bills metered API
-  usage, so the same fan-out becomes cash. `codex login status` tells you which.
+  session spends subscription quota, but an API key — stored via `codex login --with-api-key`
+  or merely exported as `OPENAI_API_KEY` — bills metered usage, so the same fan-out becomes
+  cash. `codex doctor` tells you which, and warns when both are in play; `codex login status`
+  does not.
 - **grok** — bounded mechanical breadth: tests, repetitive multi-file edits, exploration.
   `--max-turns` gives a hard budget, and its JSON reports `total_cost_usd`. Metered, so
   watch the number.
@@ -269,10 +291,11 @@ these runs fail.
 4. **Hard budgets always** — `--max-turns` on grok, `timeout` plus `turn/interrupt` on
    codex. Unbounded tool chaining is the classic way to burn an afternoon and a quota.
 5. **Pre-flight the budget** before a wide fan-out, by whatever the lane affords. In Lane A
-   that means `codex login status` (subscription quota or metered API key — the two fail
-   very differently) plus grok's `total_cost_usd` from the previous batch. A real quota
-   figure needs `account/rateLimits/read`, which is Lane B; one short app-server handshake
-   gets it without adopting Lane B for the actual work.
+   that means `codex doctor` under the `CODEX_HOME` you are about to spend — not `codex login
+   status`, which cannot distinguish profiles and hides an `OPENAI_API_KEY` override —
+   plus grok's `total_cost_usd` from the previous batch. A real quota figure needs
+   `account/rateLimits/read`, which is Lane B; one short app-server handshake gets it without
+   adopting Lane B for the actual work.
 6. **Whoever writes, someone else reviews.** Each model finds more bugs in the other's
    code than its own. Give the reviewer the spec and the diff — strip the implementer's
    own assessment, which measurably softens review depth. When codex is the reviewer,
