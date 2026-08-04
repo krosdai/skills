@@ -136,9 +136,10 @@ nobody has reviewed it yet.
 
 **codex validates `--output-schema` in strict mode.** Every key in `properties` must also
 appear in `required`, and `additionalProperties` must be `false`. Omit one and the turn dies
-with `invalid_json_schema` before any work happens — the run fails fast, but only the stderr
-file and a `turn.failed` event say why. Model optional fields as nullable types, not as
-absent-from-`required`.
+with `invalid_json_schema` before any work happens. The reason lands in the JSONL — once as an
+`error` event, again on `turn.failed` — and _not_ in the `.err` file, which stays empty. A
+supervisor that reads only stderr sees a silent failure. Model optional fields as nullable
+types, not as absent-from-`required`.
 
 **The delegate commits; you review and merge.** Rule 3 assumes each task branch exists when
 its worker exits, so say so in the brief. A linked worktree's `.git` is a gitfile pointing
@@ -177,6 +178,13 @@ corrupts the brief.
 
 codex JSONL: `thread.started` → `turn.started` → `item.started`/`item.completed` →
 `turn.completed` (carries `usage`); failures as `turn.failed` / `error`. Parse per line.
+
+**An `error` _item_ is not a failed turn.** A perfectly healthy run emits `item.completed`
+carrying `item.type: "error"` for advisory notices (a truncated skill-description budget, say)
+and still reaches `turn.completed` with exit 0. Judge the run on `turn.completed` versus
+`turn.failed` plus the exit code; a supervisor that greps the JSONL for `error` condemns every
+clean run.
+
 `--output-schema` and `-o` compose — stdout stays JSONL, `-o` gets final text. `-C` moves
 the agent's working root but not the CLI's own path resolution: both `--output-schema` and
 `-o` are resolved against the invoking shell. Keep `-o` pointed at `$LOG`, outside the
@@ -259,10 +267,11 @@ these runs fail.
 - Every `thread/start` restarts the entire MCP server set (~20 servers with a heavy
   config). Thread creation is neither free nor fast — trim MCP for delegated work, or
   reuse threads instead of one-per-task.
-- On Linux hosts with `kernel.apparmor_restrict_unprivileged_userns=1`, the app-server
-  logs a bubblewrap/user-namespace ERROR at startup. It is a false alarm: codex falls back
-  to its own Landlock/seccomp helper. Confirm with `codex doctor`, which reports the
-  sandbox as active.
+- Older codex builds logged a bubblewrap/user-namespace ERROR at app-server startup on Linux
+  hosts with `kernel.apparmor_restrict_unprivileged_userns=1`. It was always a false alarm —
+  codex falls back to its own sandbox helper — and 0.146.0 no longer emits it (checked on such
+  a host: startup stderr was empty). If an older build still shouts, `codex doctor` settles it,
+  reporting `sandbox  restricted fs + restricted network` plus the helper path.
 - Piping `jq` output straight into `wc`/`rg` has truncated non-deterministically. Write to
   a file first when a count matters.
 - The three CLIs may already share global instructions (`~/.codex/AGENTS.md`,
