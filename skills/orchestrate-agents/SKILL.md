@@ -191,7 +191,15 @@ the agent's working root but not the CLI's own path resolution: both `--output-s
 worktree — an artifact written inside it leaves the tree dirty, and `git worktree remove`
 then refuses without `--force`.
 
+**Rule 6 has a purpose-built lane on the codex side.** `codex exec review --base "$BASE"`
+reviews a branch against its base headlessly and takes the same `--json` / `-o` /
+`--output-schema` plumbing as `codex exec`; `--uncommitted` and `--commit <SHA>` narrow the
+scope instead. Because it reads a diff rather than a conversation, it strips the implementer's
+self-assessment by construction. It only satisfies rule 6 when codex is the _reviewer_ — when
+codex wrote the code, the diff still goes to grok.
+
 Also useful: `--ephemeral` and `--ignore-user-config` / `--ignore-rules` for hermetic runs,
+`--strict-config` to make an unrecognized config key an error rather than a silent ignore,
 `codex exec resume --last`, `grok --worktree=<name> --worktree-ref=<base>`
 plus `grok worktree list|rm|gc`.
 
@@ -210,6 +218,15 @@ codex app-server generate-json-schema --out ./asproto
 jq -r '.oneOf[]? | .properties?.method?.enum?[0]? // empty' \
   asproto/ClientRequest.json > methods.txt
 ```
+
+That emits the stable surface only — 90 methods on 0.146.0. Add `--experimental` and roughly
+thirty more appear (remote control, realtime audio, `thread/search`, `process/*`). Read them if
+you are hunting for a capability, but do not build a supervisor on one: the flag exists
+precisely because they move without notice.
+
+`--stdio` is shorthand for `--listen stdio://`. `--listen` also takes `unix://PATH` and
+`ws://IP:PORT`, which is what you want if the supervisor and the server are not
+parent-and-child processes.
 
 What Lane B uniquely buys: `turn/steer` (inject correction mid-turn), `turn/interrupt`,
 `thread/fork` (variants off a shared prefix), `account/rateLimits/read`, and
@@ -258,7 +275,8 @@ these runs fail.
    gets it without adopting Lane B for the actual work.
 6. **Whoever writes, someone else reviews.** Each model finds more bugs in the other's
    code than its own. Give the reviewer the spec and the diff — strip the implementer's
-   own assessment, which measurably softens review depth.
+   own assessment, which measurably softens review depth. When codex is the reviewer,
+   `codex exec review` (Lane A) already works that way.
 7. **Never let an agent author `AGENTS.md`.** Human-written only; generated ones cost
    context and slightly reduce success.
 
