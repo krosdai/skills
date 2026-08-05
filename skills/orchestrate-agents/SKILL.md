@@ -18,7 +18,7 @@ file scopes collide, or no independent work remains.
 
 ## Choose the lane
 
-|                 | Lane A: one process per task      | Lane B: persistent app server     |
+|                 | Lane A: one process per task      | Lane B: persistent app-server     |
 | --------------- | --------------------------------- | --------------------------------- |
 | Best for        | bounded implementation and review | repeated or steerable work        |
 | Context cost    | paid again for every process      | amortized across turns            |
