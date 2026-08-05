@@ -49,10 +49,12 @@ npx skills add https://github.com/xdanger/skills --skill orchestrate-agents
 
 ## Development
 
-Install [mise](https://mise.jdx.dev/installing-mise.html), then provision the pinned
-AutoCorrect release and JavaScript dependencies:
+Install [mise](https://mise.jdx.dev/installing-mise.html). After reviewing `mise.toml`, trust
+the repository configuration and provision the pinned AutoCorrect release and JavaScript
+dependencies:
 
 ```bash
+mise trust
 mise install
 pnpm install --frozen-lockfile
 ```
