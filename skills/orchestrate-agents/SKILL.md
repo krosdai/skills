@@ -63,10 +63,14 @@ git rev-parse --verify -q "$BASE" >/dev/null || { echo "base '$BASE' not found" 
 TIMEOUT=$(command -v timeout || command -v gtimeout) ||
   { echo "no GNU timeout — macOS: brew install coreutils" >&2; exit 1; }
 
-# CODEX_HOME picks which codex account the fan-out spends, and nothing else does. Workers
-# inherit your environment, so naming it here is how you keep a wide run off the wrong
-# profile's quota. See "Which codex account pays" below.
-export CODEX_HOME=${CODEX_HOME:-$HOME/.codex}
+# CODEX_HOME picks which codex account the fan-out spends. Demand it rather than defaulting:
+# an inherited value silently spends the wrong profile, which is the failure this guards. And
+# CODEX_API_KEY outranks the pinned profile in this lane, so drop it. See "CODEX_HOME selects
+# the profile" below.
+export CODEX_HOME=${CODEX_HOME:?name the codex profile to spend from, e.g. $HOME/.codex}
+[ -f "$CODEX_HOME/auth.json" ] ||
+  { echo "no auth.json in $CODEX_HOME — wrong profile?" >&2; exit 1; }
+unset CODEX_API_KEY
 
 # One result contract, consumed differently: codex takes a path, grok takes the text.
 cat > "$RUN/result.schema.json" <<'JSON'
@@ -165,24 +169,44 @@ with shell access — a worker that misreads its file scope can reach the siblin
 your other parallel tasks. Pair it with `--sandbox` (or `GROK_SANDBOX`) so something is
 still holding the boundary.
 
-**Which codex account pays is `CODEX_HOME`, and only `CODEX_HOME`.** No CLI flag selects it:
-`-p/--profile` layers `$CODEX_HOME/<name>.config.toml`, which switches _config_ and never
-credentials — even `--ignore-user-config` keeps reading auth from `CODEX_HOME`. Where several
-profiles are logged in on one machine, `codex login status` cannot tell them apart: it prints
-the same `Logged in using ChatGPT` for every profile directory, and stays silent about an
-`OPENAI_API_KEY` sitting in the environment — which applies no matter which profile you chose,
-so a fan-out you believe is spending subscription quota can be billing metered API instead.
-`codex doctor` is what discloses this, warning `mixed auth signals` and breaking out `auth env
-vars present`, `stored auth mode`, and `reachability mode`. Pin `CODEX_HOME` per run rather
-than trusting whatever the supervising shell inherited.
+**`CODEX_HOME` selects the profile, but it does not defend it.** No CLI flag selects the
+account: `-p/--profile` layers `$CODEX_HOME/<name>.config.toml`, which switches _config_ and
+never credentials — even `--ignore-user-config` keeps reading auth from `CODEX_HOME`. What
+`CODEX_HOME` cannot do is stop an environment variable outranking the profile you pinned.
+Measured precedence in `codex exec`: a provider's own `env_key` beats **`CODEX_API_KEY`**,
+which beats the stored ChatGPT login. Export `CODEX_API_KEY` and every worker bills metered
+API from a profile whose `auth.json` still says `chatgpt` — so `unset` it, or launch through
+`env -u CODEX_API_KEY`.
+
+`OPENAI_API_KEY` is _not_ that variable, which is worth knowing precisely because it looks
+like it should be. On 0.146.0 the built-in `openai` provider sets no `env_key`, so exporting
+`OPENAI_API_KEY` changes nothing about who pays: a bogus value produces byte-identical
+behaviour to no value at all. It only flips `codex doctor`'s own HTTP probe, which is why
+doctor can warn `mixed auth signals` on a run that is spending pure subscription quota.
+
+That makes `codex login status` useless for this: it prints the same `Logged in using ChatGPT`
+for every profile directory and says nothing about either variable. Read `codex doctor`
+instead — and read the right row. `auth mode`, under Connectivity, is the credential a turn
+actually spends; `reachability mode` describes only the probe, and `auth env vars present`
+reports presence, never precedence:
+
+```bash
+codex doctor --json | jq -r '.checks[]|select(.id=="network.websocket_reachability").details["auth mode"]'
+```
+
+Scope that to Lane A. On this build the app-server lane ignored `CODEX_API_KEY` and spent the
+stored login anyway, while doctor still reported `api_key` — so treat the row as an answer
+about `codex exec`, and keep the `unset` in both lanes rather than relying on the difference.
 
 **Check the exit status, not just the output.** When `timeout` fires, codex is killed
 mid-stream: the JSONL never reaches `turn.completed` and `-o` is never written, which looks
 identical to a crash or a bad schema path. The exit code is the only signal: 124 when
 SIGTERM ended it, 137 when `-k` escalated to SIGKILL (measured on GNU coreutils 9.4). Do not
 lean too hard on 137 though — an OOM kill or a CI runner reaping the job produces it too.
-Treat any non-zero code as "no usable result", read the `.err` file for the reason, and
-remember the worktree still holds partial, uncommitted edits either way.
+Treat any non-zero code as "no usable result", then look for the reason in the JSONL first —
+`turn.failed` and `error` carry it, and a schema rejection puts it there while leaving `.err`
+empty. Fall back to `.err` only for failures that never reached the protocol at all. Either
+way the worktree still holds partial, uncommitted edits.
 
 Keep stderr in its own file. Both machine-readable outputs are parsed structurally, so
 folding diagnostics into them with `2>&1` corrupts the parse — including the harmless
@@ -207,12 +231,36 @@ the agent's working root but not the CLI's own path resolution: both `--output-s
 worktree — an artifact written inside it leaves the tree dirty, and `git worktree remove`
 then refuses without `--force`.
 
-**Rule 6 has a purpose-built lane on the codex side.** `codex exec review --base "$BASE"`
-reviews a branch against its base headlessly and takes the same `--json` / `-o` /
-`--output-schema` plumbing as `codex exec`; `--uncommitted` and `--commit <SHA>` narrow the
-scope instead. Because it reads a diff rather than a conversation, it strips the implementer's
-self-assessment by construction. It only satisfies rule 6 when codex is the _reviewer_ — when
-codex wrote the code, the diff still goes to grok.
+**Rule 6 has a purpose-built lane on the codex side.** `codex exec review` reviews headlessly
+and keeps the same `--json` / `-o` / `--output-schema` plumbing as `codex exec`. Because it
+reads a diff rather than a conversation, it strips the implementer's self-assessment by
+construction. It only satisfies rule 6 when codex is the _reviewer_ — when codex wrote the
+code, the diff still goes to grok.
+
+Three things about it will bite on first use:
+
+```bash
+# Parent-level flags go BEFORE `review` — the subcommand has no -C, -p, -s, --add-dir, -i.
+codex exec -C "$WORKTREES/$t" review --base "$BASE" --json -o "$LOG/$t.review.txt"
+# codex exec review -C … → error: unexpected argument '-C' found
+```
+
+1. **The target and a prompt are mutually exclusive.** `--base`, `--uncommitted`, `--commit`,
+   and a free-form `[PROMPT]` are four ways to name one `ReviewTarget`, so you get exactly
+   one: `error: the argument '--base <BRANCH>' cannot be used with '[PROMPT]'` (exit 2). Flag
+   ordering will not save you, and `-` reads as a prompt, so stdin is not a way around it.
+2. **So `--base` cannot carry the spec** that rule 6 asks for. Use the prompt form instead and
+   let the reviewer resolve the diff itself — `codex exec -C "$WORKTREES/$t" review "<spec>.
+   Review the diff of HEAD against $BASE."` A repo `AGENTS.md` also reaches the review turn
+   (verified in its rollout), but that is the human-written channel of rule 7, not somewhere
+   a supervisor writes a per-task spec.
+3. **A `--base` that does not resolve fails quietly**, unlike the script's own `rev-parse`
+   guard: codex swaps in a fallback prompt telling the model to work out the merge base, so a
+   typo'd branch yields a plausible review of the wrong range. `--title` is silently dropped
+   here too — it survives only on `--commit`.
+
+`codex review` is a thinner subcommand, not an alias: no `--json`, no `-o`, no
+`--output-schema`. For orchestration, always reach for `codex exec review`.
 
 Also useful: `--ephemeral` and `--ignore-user-config` / `--ignore-rules` for hermetic runs,
 `--strict-config` to make an unrecognized config key an error rather than a silent ignore,
@@ -222,9 +270,12 @@ plus `grok worktree list|rm|gc`.
 ## Lane B
 
 Lifecycle: `initialize` → `initialized` → `thread/start` → `turn/start` → notifications →
-`turn/completed`. Newline-delimited JSON-RPC 2.0 request/response/notification shapes, but
-the `jsonrpc: "2.0"` version field is omitted — treat it as JSON-RPC-style framing, not a
-conformant JSON-RPC 2.0 endpoint, and do not send the field yourself.
+`turn/completed`. JSON-RPC 2.0 request/response/notification shapes, but the `jsonrpc: "2.0"`
+version field is omitted — treat it as JSON-RPC-style, not a conformant JSON-RPC 2.0
+endpoint, and do not send the field yourself.
+
+The messages are the same on every transport; the _framing_ is not. Newline-delimited JSON is
+`stdio://` only — everything below assumes it.
 
 Generate the protocol from the installed binary rather than trusting any list — it moves
 between releases:
@@ -241,8 +292,23 @@ you are hunting for a capability, but do not build a supervisor on one: the flag
 precisely because they move without notice.
 
 `--stdio` is shorthand for `--listen stdio://`. `--listen` also takes `unix://PATH` and
-`ws://IP:PORT`, which is what you want if the supervisor and the server are not
-parent-and-child processes.
+`ws://IP:PORT` for a supervisor that is not the server's parent — but **both speak WebSocket,
+not newline-delimited JSON**. Write the stdio bytes at either and you get silence (unix) or
+`HTTP/1.1 400 Bad Request` (ws); they want an RFC 6455 upgrade, after which each message is
+one text frame and the newline stops being a delimiter. The cheap way out is
+`codex app-server proxy --sock <path>`, which bridges your existing stdio client onto the
+socket and does the upgrade for you.
+
+Non-loopback `ws://` is not the open door it looks like: binding anything but loopback
+_refuses to start_ without `--ws-auth capability-token` (plus `--ws-token-file` /
+`--ws-token-sha256`) or `--ws-auth signed-bearer-token` (plus `--ws-shared-secret-file`). The
+credential rides the upgrade's `Authorization: Bearer` header and a bad one gets a 401 before
+any JSON-RPC, so `initialize` carrying no credential does not mean the surface is unguarded.
+Requests arriving with any `Origin` header are refused outright, which shuts the browser and
+DNS-rebinding path. What is genuinely exposed is confidentiality: there is no `wss://` and no
+TLS flag, so prompts, diffs, and the bearer token itself travel in clear text — tunnel it, or
+prefer `unix://PATH` when both ends share a host. A loopback `ws://` with no `--ws-auth` is
+unauthenticated by design, which is worth remembering on a multi-user box.
 
 What Lane B uniquely buys: `turn/steer` (inject correction mid-turn), `turn/interrupt`,
 `thread/fork` (variants off a shared prefix), `account/rateLimits/read`, and
@@ -266,9 +332,9 @@ assuming N× throughput.
 - **codex** — well-specified repo-local implementation. No turn cap: bound it with
   `timeout` externally. Check the auth mode before sizing a fan-out: a ChatGPT-logged-in
   session spends subscription quota, but an API key — stored via `codex login --with-api-key`
-  or merely exported as `OPENAI_API_KEY` — bills metered usage, so the same fan-out becomes
-  cash. `codex doctor` tells you which, and warns when both are in play; `codex login status`
-  does not.
+  or exported as `CODEX_API_KEY`, which outranks the stored login — bills metered usage, so
+  the same fan-out becomes cash. `codex doctor`'s `auth mode` row tells you which; `codex
+  login status` does not.
 - **grok** — bounded mechanical breadth: tests, repetitive multi-file edits, exploration.
   `--max-turns` gives a hard budget, and its JSON reports `total_cost_usd`. Metered, so
   watch the number.
@@ -291,9 +357,9 @@ these runs fail.
 4. **Hard budgets always** — `--max-turns` on grok, `timeout` plus `turn/interrupt` on
    codex. Unbounded tool chaining is the classic way to burn an afternoon and a quota.
 5. **Pre-flight the budget** before a wide fan-out, by whatever the lane affords. In Lane A
-   that means `codex doctor` under the `CODEX_HOME` you are about to spend — not `codex login
-   status`, which cannot distinguish profiles and hides an `OPENAI_API_KEY` override —
-   plus grok's `total_cost_usd` from the previous batch. A real quota figure needs
+   that means `codex doctor`'s `auth mode` row under the `CODEX_HOME` you are about to spend
+   — not `codex login status`, which cannot distinguish profiles and hides a `CODEX_API_KEY`
+   override — plus grok's `total_cost_usd` from the previous batch. A real quota figure needs
    `account/rateLimits/read`, which is Lane B; one short app-server handshake gets it without
    adopting Lane B for the actual work.
 6. **Whoever writes, someone else reviews.** Each model finds more bugs in the other's
