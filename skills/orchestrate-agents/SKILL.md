@@ -112,8 +112,17 @@ for spec in "${TASKS[@]}"; do
   # that makes every later re-run of this task fail at `add`.
   [ -s "$BRIEFS/$t.md" ] || { echo "$t no-brief" >> "$LOG/exit-codes"; continue; }
   # Every other precondition belongs here too, for exactly that reason — a worker that
-  # cannot start must not leave a tree and branch behind. Only codex tasks need the account,
-  # so an all-grok fan-out runs fine on a host without codex.
+  # cannot start must not leave a tree and branch behind. An unknown lane is one of them:
+  # `${spec##*:}` returns the whole string when the colon is missing, and `run_<that>` would
+  # die as 127 in the background, recording nothing and orphaning the tree.
+  case $lane in
+    codex | grok) ;;
+    *) echo "$t bad-lane-$lane" >> "$LOG/exit-codes"; continue ;;
+  esac
+  # Only codex tasks need the account, so an all-grok fan-out runs fine without codex. This
+  # deliberately demands a stored login: `run_codex` strips CODEX_API_KEY, so on a host where
+  # that variable IS the credential (CI, typically), drop the `env -u` and accept metered
+  # billing — do not just create an empty auth.json.
   if [ "$lane" = codex ] && [ ! -f "$CODEX_HOME/auth.json" ]; then
     echo "$t no-codex-auth-in-$CODEX_HOME" >> "$LOG/exit-codes"; continue
   fi
@@ -329,8 +338,10 @@ Loopback is the case to actually think about, because there the refusal does not
 multi-user box every local account can reach that approval surface. Two fixes, both verified:
 
 ```bash
-# Best — the socket is created srw------- (0600), so file permissions do the gating.
-codex app-server --listen unix://"$XDG_RUNTIME_DIR"/codex-as.sock
+# Best — the socket is created srw------- (0600), so file permissions do the gating. Keep it
+# on a private path: XDG_RUNTIME_DIR is unset on macOS and non-systemd hosts, and unguarded
+# the path would collapse to unix:///codex-as.sock at the filesystem root.
+codex app-server --listen unix://"${XDG_RUNTIME_DIR:-$HOME}"/codex-as.sock
 
 # Or keep ws:// and authenticate it. --ws-auth is honoured on loopback too: without the
 # header the upgrade gets 401, with it 101.
