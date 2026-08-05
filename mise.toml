@@ -1,0 +1,7 @@
+# AutoCorrect is installed from GitHub releases because the npm package does
+# not provide a Linux arm64 binary.
+[tools]
+"github:huacnlee/autocorrect" = "2.16"
+
+[tasks]
+"autocorrect:fix" = ["autocorrect --fix ."]
