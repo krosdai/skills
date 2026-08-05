@@ -107,7 +107,7 @@ for spec in "${TASKS[@]}"; do
   t=${spec%%:*} lane=${spec##*:}
   # Drop last run's artifacts for this task, or a skip leaves stale results that read as
   # this run's — the same trap the exit-codes truncation above avoids.
-  rm -f "$LOG/$t".{jsonl,json,err,last.txt}
+  rm -f "$LOG/$t".{jsonl,json,err,last.txt} "$LOG/$t".review.{jsonl,txt,err}
   # Check the brief BEFORE creating anything, or a missing one leaves an orphaned worktree
   # that makes every later re-run of this task fail at `add`.
   [ -s "$BRIEFS/$t.md" ] || { echo "$t no-brief" >> "$LOG/exit-codes"; continue; }
@@ -262,8 +262,10 @@ Three things about it will bite on first use:
 ```bash
 # Parent-level flags go BEFORE `review` — the subcommand has no -C, -p, -s, --add-dir, -i.
 # The spec rides in positionally, which is the only shape that carries spec AND diff (2 below).
-# It is still a `codex exec` turn: no turn cap (rule 4), and --json needs its own redirect.
-"$TIMEOUT" -k 30s 30m codex exec -C "$WORKTREES/$t" review \
+# It is still a `codex exec` turn: no turn cap (rule 4), --json needs its own redirect, and
+# the account guard applies here too — this lane runs once per reviewed task.
+"$TIMEOUT" -k 30s 30m env -u CODEX_API_KEY \
+  codex exec -C "$WORKTREES/$t" review \
   --json -o "$LOG/$t.review.txt" \
   "$(cat "$BRIEFS/$t.md")
 Review the diff of HEAD against $BASE against that spec." < /dev/null \
@@ -377,8 +379,8 @@ assuming N× throughput.
   `timeout` externally. Check the auth mode before sizing a fan-out: a ChatGPT-logged-in
   session spends subscription quota, but an API key — stored via `codex login --with-api-key`
   or exported as `CODEX_API_KEY`, which outranks the stored login — bills metered usage, so
-  the same fan-out becomes cash. `codex doctor`'s `auth mode` row tells you which; `codex
-login status` does not.
+  the same fan-out becomes cash. `codex doctor`'s `auth mode` row tells you which.
+  `codex login status` does not.
 - **grok** — bounded mechanical breadth: tests, repetitive multi-file edits, exploration.
   `--max-turns` gives a hard budget, and its JSON reports `total_cost_usd`. Metered, so
   watch the number.
@@ -405,10 +407,11 @@ these runs fail.
    — not `codex login status`, which cannot distinguish profiles and hides a `CODEX_API_KEY`
    override — plus grok's `total_cost_usd` from the previous batch. A real quota figure needs
    `account/rateLimits/read`, which is Lane B; one short app-server handshake gets it without
-   adopting Lane B for the actual work. Start that handshake with `CODEX_API_KEY` unset, as
-   `run_codex` does — the app-server lane ignores the variable, so otherwise it hands you the
-   stored login's quota while the workers bill metered API, reassuring you in exactly the case
-   that costs money.
+   adopting Lane B for the actual work. That figure only describes the stored login, because
+   the handshake ignores `CODEX_API_KEY` — so it is trustworthy exactly when the workers spend
+   the same credential, which is what `run_codex`'s `env -u` guarantees. Drop that `env -u` and
+   the number stops meaning anything: check `codex doctor`'s `auth mode` in the workers' own
+   environment instead of reading rate limits at all.
 6. **Whoever writes, someone else reviews.** Each model finds more bugs in the other's
    code than its own. Give the reviewer the spec and the diff — strip the implementer's
    own assessment, which measurably softens review depth. When codex is the reviewer,
