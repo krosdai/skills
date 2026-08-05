@@ -68,6 +68,11 @@ TIMEOUT=$(command -v timeout || command -v gtimeout) ||
 # A custom provider's own `env_key` outranks even that, so assert the resolved account with
 # rule 5's `codex doctor` query before a wide run. See "CODEX_HOME selects the profile" below.
 CODEX_HOME=${CODEX_HOME:-$HOME/.codex}; export CODEX_HOME
+# Strip CODEX_API_KEY only when a stored login is what we mean to spend. Deriving this from
+# the same file the guard below tests keeps the two in step: where the key IS the credential
+# (CI), it survives, and the doctor query run through CODEX_ENV still answers about workers.
+CODEX_ENV=(env -u CODEX_API_KEY)
+[ -f "$CODEX_HOME/auth.json" ] || CODEX_ENV=(env)
 
 # One result contract, consumed differently: codex takes a path, grok takes the text.
 cat > "$RUN/result.schema.json" <<'JSON'
@@ -86,7 +91,7 @@ JSON
 run_codex() { # $1 = task id
   # codex has no turn cap, so `timeout` is the budget (rule 4). -k reaps a worker that
   # ignores SIGTERM; exit 124 means the budget fired, not that the task failed.
-  "$TIMEOUT" -k 30s 30m env -u CODEX_API_KEY \
+  "$TIMEOUT" -k 30s 30m "${CODEX_ENV[@]}" \
     codex exec --json --sandbox workspace-write \
     -C "$WORKTREES/$1" --output-schema "$RUN/result.schema.json" -o "$LOG/$1.last.txt" \
     "$(cat "$BRIEFS/$1.md")" < /dev/null \
@@ -119,10 +124,10 @@ for spec in "${TASKS[@]}"; do
     codex | grok) ;;
     *) echo "$t bad-lane-$lane" >> "$LOG/exit-codes"; continue ;;
   esac
-  # Only codex tasks need the account, so an all-grok fan-out runs fine without codex. Accept
-  # either credential: a stored login, or CODEX_API_KEY where that IS the credential (CI,
-  # typically) — in which case also drop `run_codex`'s `env -u`, and accept that the two then
-  # bill differently. Never paper over a missing account by creating an empty auth.json.
+  # Only codex tasks need the account, so an all-grok fan-out runs fine without codex. Either
+  # credential counts — a stored login, or CODEX_API_KEY where that IS the credential (CI);
+  # CODEX_ENV above already keeps the launcher in step, so there is nothing to edit by hand.
+  # Never paper over a missing account by creating an empty auth.json.
   if [ "$lane" = codex ] && [ ! -f "$CODEX_HOME/auth.json" ] && [ -z "$CODEX_API_KEY" ]; then
     echo "$t no-codex-auth-in-$CODEX_HOME" >> "$LOG/exit-codes"; continue
   fi
@@ -210,9 +215,13 @@ actually spends; `reachability mode` describes only the probe, and `auth env var
 reports presence, never precedence:
 
 ```bash
-# Mirror `run_codex`'s `env -u`, or you measure your own credential rather than the workers'.
-env -u CODEX_API_KEY codex doctor --json |
-  jq -r '.checks[]|select(.id=="network.websocket_reachability").details["auth mode"]'
+# Run it through CODEX_ENV, or you measure your own credential rather than the workers'.
+# `jq -e` matters as much: a renamed check id would otherwise print nothing and exit 0,
+# turning the guard against an accidental metered fan-out into a silent pass.
+AUTH=$("${CODEX_ENV[@]}" codex doctor --json |
+  jq -er '.checks[]|select(.id=="network.websocket_reachability").details["auth mode"]') ||
+  { echo "cannot read auth mode from codex doctor" >&2; exit 1; }
+echo "$AUTH" # chatgpt = subscription quota, api_key = metered
 ```
 
 Scope that to Lane A. On this build the app-server lane ignored `CODEX_API_KEY` and spent the
@@ -266,7 +275,7 @@ Three things about it will bite on first use:
 # The spec rides in positionally, which is the only shape that carries spec AND diff (2 below).
 # It is still a `codex exec` turn: no turn cap (rule 4), --json needs its own redirect, and
 # the account guard applies here too — this lane runs once per reviewed task.
-"$TIMEOUT" -k 30s 30m env -u CODEX_API_KEY \
+"$TIMEOUT" -k 30s 30m "${CODEX_ENV[@]}" \
   codex exec -C "$WORKTREES/$t" review \
   --json -o "$LOG/$t.review.txt" \
   "$(cat "$BRIEFS/$t.md")
@@ -353,7 +362,10 @@ multi-user box every local account can reach that approval surface. Two fixes, b
 codex app-server --listen unix://"${XDG_RUNTIME_DIR:-$HOME}"/codex-as.sock
 
 # Or keep ws:// and authenticate it. --ws-auth is honoured on loopback too: without the
-# header the upgrade gets 401, with it 101.
+# header the upgrade gets 401, with it 101. The token file is then the whole boundary, so
+# create it under a tight umask — the default 0644 hands the capability to every local
+# account, which is the exposure this block exists to close. Same for the shared-secret file.
+(umask 077; openssl rand -hex 32 > ~/.config/codex-as.token)
 codex app-server --listen ws://127.0.0.1:7777 \
   --ws-auth capability-token --ws-token-file ~/.config/codex-as.token
 ```
