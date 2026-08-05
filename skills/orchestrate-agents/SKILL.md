@@ -160,7 +160,8 @@ nobody has reviewed it yet.
 **codex validates `--output-schema` in strict mode.** Every key in `properties` must also
 appear in `required`, and `additionalProperties` must be `false`. Omit one and the turn dies
 with `invalid_json_schema` before any work happens. The reason lands in the JSONL — once as an
-`error` event, again on `turn.failed` — and _not_ in the `.err` file, which stays empty. A
+`error` event, again on `turn.failed` — and _not_ in the `.err` file, which carries only
+startup chatter. A
 supervisor that reads only stderr sees a silent failure. Model optional fields as nullable
 types, not as absent-from-`required`.
 
@@ -222,9 +223,10 @@ identical to a crash or a bad schema path. The exit code is the only signal: 124
 SIGTERM ended it, 137 when `-k` escalated to SIGKILL (measured on GNU coreutils 9.4). Do not
 lean too hard on 137 though — an OOM kill or a CI runner reaping the job produces it too.
 Treat any non-zero code as "no usable result", then look for the reason in the JSONL first —
-`turn.failed` and `error` carry it, and a schema rejection puts it there while leaving `.err`
-empty. Fall back to `.err` only for failures that never reached the protocol at all. Either
-way the worktree still holds partial, uncommitted edits.
+`turn.failed` and `error` carry it, and a schema rejection puts it there rather than in
+`.err`. Fall back to `.err` only for failures that never reached the protocol at all — and
+do not test it for emptiness, since it collects startup chatter regardless. Either way the
+worktree still holds partial, uncommitted edits.
 
 Keep stderr in its own file. Both machine-readable outputs are parsed structurally, so
 folding diagnostics into them with `2>&1` corrupts the parse — and codex does write ordinary
@@ -260,9 +262,12 @@ Three things about it will bite on first use:
 ```bash
 # Parent-level flags go BEFORE `review` — the subcommand has no -C, -p, -s, --add-dir, -i.
 # The spec rides in positionally, which is the only shape that carries spec AND diff (2 below).
-codex exec -C "$WORKTREES/$t" review --json -o "$LOG/$t.review.txt" \
+# It is still a `codex exec` turn: no turn cap (rule 4), and --json needs its own redirect.
+"$TIMEOUT" -k 30s 30m codex exec -C "$WORKTREES/$t" review \
+  --json -o "$LOG/$t.review.txt" \
   "$(cat "$BRIEFS/$t.md")
-Review the diff of HEAD against $BASE against that spec." < /dev/null
+Review the diff of HEAD against $BASE against that spec." < /dev/null \
+  > "$LOG/$t.review.jsonl" 2> "$LOG/$t.review.err"
 
 # codex exec review -C …            → error: unexpected argument '-C' found
 # codex exec review --base X "spec" → error: the argument '--base <BRANCH>' cannot be used
@@ -400,7 +405,10 @@ these runs fail.
    — not `codex login status`, which cannot distinguish profiles and hides a `CODEX_API_KEY`
    override — plus grok's `total_cost_usd` from the previous batch. A real quota figure needs
    `account/rateLimits/read`, which is Lane B; one short app-server handshake gets it without
-   adopting Lane B for the actual work.
+   adopting Lane B for the actual work. Start that handshake with `CODEX_API_KEY` unset, as
+   `run_codex` does — the app-server lane ignores the variable, so otherwise it hands you the
+   stored login's quota while the workers bill metered API, reassuring you in exactly the case
+   that costs money.
 6. **Whoever writes, someone else reviews.** Each model finds more bugs in the other's
    code than its own. Give the reviewer the spec and the diff — strip the implementer's
    own assessment, which measurably softens review depth. When codex is the reviewer,
