@@ -63,15 +63,6 @@ git rev-parse --verify -q "$BASE" >/dev/null || { echo "base '$BASE' not found" 
 TIMEOUT=$(command -v timeout || command -v gtimeout) ||
   { echo "no GNU timeout — macOS: brew install coreutils" >&2; exit 1; }
 
-# CODEX_HOME picks which codex account the fan-out spends. Demand it rather than defaulting:
-# an inherited value silently spends the wrong profile, which is the failure this guards. And
-# CODEX_API_KEY outranks the pinned profile in this lane, so drop it. See "CODEX_HOME selects
-# the profile" below.
-export CODEX_HOME=${CODEX_HOME:?name the codex profile to spend from, e.g. $HOME/.codex}
-[ -f "$CODEX_HOME/auth.json" ] ||
-  { echo "no auth.json in $CODEX_HOME — wrong profile?" >&2; exit 1; }
-unset CODEX_API_KEY
-
 # One result contract, consumed differently: codex takes a path, grok takes the text.
 cat > "$RUN/result.schema.json" <<'JSON'
 {
@@ -87,9 +78,18 @@ cat > "$RUN/result.schema.json" <<'JSON'
 JSON
 
 run_codex() { # $1 = task id
+  # CODEX_HOME names the account this spends and no CLI flag does — but guard it inside the
+  # lane, or an all-grok fan-out dies here on a host without codex. `-u CODEX_API_KEY` closes
+  # the env override; a custom provider's own `env_key` outranks even that, so assert the
+  # account with rule 5's `codex doctor` query before going wide. See "CODEX_HOME selects the
+  # profile" below.
+  local home=${CODEX_HOME:-$HOME/.codex}
+  [ -f "$home/auth.json" ] ||
+    { echo "$1 no-codex-auth-in-$home" >> "$LOG/exit-codes"; return; }
   # codex has no turn cap, so `timeout` is the budget (rule 4). -k reaps a worker that
   # ignores SIGTERM; exit 124 means the budget fired, not that the task failed.
-  "$TIMEOUT" -k 30s 30m codex exec --json --sandbox workspace-write \
+  "$TIMEOUT" -k 30s 30m env -u CODEX_API_KEY CODEX_HOME="$home" \
+    codex exec --json --sandbox workspace-write \
     -C "$WORKTREES/$1" --output-schema "$RUN/result.schema.json" -o "$LOG/$1.last.txt" \
     "$(cat "$BRIEFS/$1.md")" < /dev/null \
     > "$LOG/$1.jsonl" 2> "$LOG/$1.err"
@@ -176,7 +176,11 @@ never credentials — even `--ignore-user-config` keeps reading auth from `CODEX
 Measured precedence in `codex exec`: a provider's own `env_key` beats **`CODEX_API_KEY`**,
 which beats the stored ChatGPT login. Export `CODEX_API_KEY` and every worker bills metered
 API from a profile whose `auth.json` still says `chatgpt` — so `unset` it, or launch through
-`env -u CODEX_API_KEY`.
+`env -u CODEX_API_KEY`. That closes one rung, not the ladder: unless you pass
+`--ignore-user-config`, a `model_provider` in `$CODEX_HOME/config.toml` can name an `env_key`
+already sitting in your environment, and by the ordering above it wins anyway. Nothing in the
+launcher can see that, which is why the pre-flight below asserts the resolved account instead
+of trusting the guard.
 
 `OPENAI_API_KEY` is _not_ that variable, which is worth knowing precisely because it looks
 like it should be. On 0.146.0 the built-in `openai` provider sets no `env_key`, so exporting
@@ -209,8 +213,8 @@ empty. Fall back to `.err` only for failures that never reached the protocol at 
 way the worktree still holds partial, uncommitted edits.
 
 Keep stderr in its own file. Both machine-readable outputs are parsed structurally, so
-folding diagnostics into them with `2>&1` corrupts the parse — including the harmless
-startup ERROR described under Gotchas.
+folding diagnostics into them with `2>&1` corrupts the parse — and codex does write ordinary
+chatter there, `Reading additional input from stdin...` on every redirected run for one.
 
 `< /dev/null` is mandatory. With non-TTY stdin, codex appends whatever it finds as a
 `<stdin>` block on your prompt; a spawned shell inherits stdin, so omitting it silently
@@ -241,8 +245,14 @@ Three things about it will bite on first use:
 
 ```bash
 # Parent-level flags go BEFORE `review` — the subcommand has no -C, -p, -s, --add-dir, -i.
-codex exec -C "$WORKTREES/$t" review --base "$BASE" --json -o "$LOG/$t.review.txt"
-# codex exec review -C … → error: unexpected argument '-C' found
+# The spec rides in positionally, which is the only shape that carries spec AND diff (2 below).
+codex exec -C "$WORKTREES/$t" review --json -o "$LOG/$t.review.txt" \
+  "$(cat "$BRIEFS/$t.md")
+Review the diff of HEAD against $BASE against that spec." < /dev/null
+
+# codex exec review -C …            → error: unexpected argument '-C' found
+# codex exec review --base X "spec" → error: the argument '--base <BRANCH>' cannot be used
+#                                     with '[PROMPT]'
 ```
 
 1. **The target and a prompt are mutually exclusive.** `--base`, `--uncommitted`, `--commit`,
@@ -251,7 +261,7 @@ codex exec -C "$WORKTREES/$t" review --base "$BASE" --json -o "$LOG/$t.review.tx
    ordering will not save you, and `-` reads as a prompt, so stdin is not a way around it.
 2. **So `--base` cannot carry the spec** that rule 6 asks for. Use the prompt form instead and
    let the reviewer resolve the diff itself — `codex exec -C "$WORKTREES/$t" review "<spec>.
-   Review the diff of HEAD against $BASE."` A repo `AGENTS.md` also reaches the review turn
+Review the diff of HEAD against $BASE."` A repo `AGENTS.md` also reaches the review turn
    (verified in its rollout), but that is the human-written channel of rule 7, not somewhere
    a supervisor writes a per-task spec.
 3. **A `--base` that does not resolve fails quietly**, unlike the script's own `rev-parse`
@@ -334,7 +344,7 @@ assuming N× throughput.
   session spends subscription quota, but an API key — stored via `codex login --with-api-key`
   or exported as `CODEX_API_KEY`, which outranks the stored login — bills metered usage, so
   the same fan-out becomes cash. `codex doctor`'s `auth mode` row tells you which; `codex
-  login status` does not.
+login status` does not.
 - **grok** — bounded mechanical breadth: tests, repetitive multi-file edits, exploration.
   `--max-turns` gives a hard budget, and its JSON reports `total_cost_usd`. Metered, so
   watch the number.
