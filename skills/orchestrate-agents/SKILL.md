@@ -41,7 +41,7 @@ same worktree is the collision rule 1 exists to prevent, so codex and grok below
 alternatives per task, never both on the same task.
 
 ```bash
-TASKS=(auth-refresh api-pagination) # one id per independent task
+TASKS=(auth-refresh:codex api-pagination:grok) # "<id>:<lane>", one per independent task
 
 # Keep worktrees and logs OUTSIDE the supervised repo — nesting them under it puts every
 # delegate's tree inside your own working tree and pollutes status/ignore rules.
@@ -63,6 +63,12 @@ git rev-parse --verify -q "$BASE" >/dev/null || { echo "base '$BASE' not found" 
 TIMEOUT=$(command -v timeout || command -v gtimeout) ||
   { echo "no GNU timeout — macOS: brew install coreutils" >&2; exit 1; }
 
+# Resolve the codex account up front so the loop can check it before creating anything. No
+# CLI flag selects it, and CODEX_API_KEY outranks it — `run_codex` drops that per invocation.
+# A custom provider's own `env_key` outranks even that, so assert the resolved account with
+# rule 5's `codex doctor` query before a wide run. See "CODEX_HOME selects the profile" below.
+CODEX_HOME=${CODEX_HOME:-$HOME/.codex}; export CODEX_HOME
+
 # One result contract, consumed differently: codex takes a path, grok takes the text.
 cat > "$RUN/result.schema.json" <<'JSON'
 {
@@ -78,17 +84,9 @@ cat > "$RUN/result.schema.json" <<'JSON'
 JSON
 
 run_codex() { # $1 = task id
-  # CODEX_HOME names the account this spends and no CLI flag does — but guard it inside the
-  # lane, or an all-grok fan-out dies here on a host without codex. `-u CODEX_API_KEY` closes
-  # the env override; a custom provider's own `env_key` outranks even that, so assert the
-  # account with rule 5's `codex doctor` query before going wide. See "CODEX_HOME selects the
-  # profile" below.
-  local home=${CODEX_HOME:-$HOME/.codex}
-  [ -f "$home/auth.json" ] ||
-    { echo "$1 no-codex-auth-in-$home" >> "$LOG/exit-codes"; return; }
   # codex has no turn cap, so `timeout` is the budget (rule 4). -k reaps a worker that
   # ignores SIGTERM; exit 124 means the budget fired, not that the task failed.
-  "$TIMEOUT" -k 30s 30m env -u CODEX_API_KEY CODEX_HOME="$home" \
+  "$TIMEOUT" -k 30s 30m env -u CODEX_API_KEY \
     codex exec --json --sandbox workspace-write \
     -C "$WORKTREES/$1" --output-schema "$RUN/result.schema.json" -o "$LOG/$1.last.txt" \
     "$(cat "$BRIEFS/$1.md")" < /dev/null \
@@ -105,20 +103,27 @@ run_grok() { # $1 = task id
   echo "$1 $?" >> "$LOG/exit-codes"
 }
 
-for t in "${TASKS[@]}"; do
+for spec in "${TASKS[@]}"; do
+  t=${spec%%:*} lane=${spec##*:}
   # Drop last run's artifacts for this task, or a skip leaves stale results that read as
   # this run's — the same trap the exit-codes truncation above avoids.
   rm -f "$LOG/$t".{jsonl,json,err,last.txt}
   # Check the brief BEFORE creating anything, or a missing one leaves an orphaned worktree
   # that makes every later re-run of this task fail at `add`.
   [ -s "$BRIEFS/$t.md" ] || { echo "$t no-brief" >> "$LOG/exit-codes"; continue; }
+  # Every other precondition belongs here too, for exactly that reason — a worker that
+  # cannot start must not leave a tree and branch behind. Only codex tasks need the account,
+  # so an all-grok fan-out runs fine on a host without codex.
+  if [ "$lane" = codex ] && [ ! -f "$CODEX_HOME/auth.json" ]; then
+    echo "$t no-codex-auth-in-$CODEX_HOME" >> "$LOG/exit-codes"; continue
+  fi
   # Never launch a worker into a tree you failed to create — on a re-run the add fails
   # ("already exists") and an unguarded worker would edit whatever is sitting there.
   git worktree add "$WORKTREES/$t" -b "feat/$t" "$BASE" || {
     echo "$t skipped-no-worktree" >> "$LOG/exit-codes"
     continue
   }
-  run_codex "$t" & # or run_grok "$t" — pick one per task
+  "run_$lane" "$t" &
 done
 wait
 
@@ -317,8 +322,21 @@ any JSON-RPC, so `initialize` carrying no credential does not mean the surface i
 Requests arriving with any `Origin` header are refused outright, which shuts the browser and
 DNS-rebinding path. What is genuinely exposed is confidentiality: there is no `wss://` and no
 TLS flag, so prompts, diffs, and the bearer token itself travel in clear text — tunnel it, or
-prefer `unix://PATH` when both ends share a host. A loopback `ws://` with no `--ws-auth` is
-unauthenticated by design, which is worth remembering on a multi-user box.
+prefer `unix://PATH` when both ends share a host.
+
+Loopback is the case to actually think about, because there the refusal does not fire: a
+`ws://127.0.0.1` listener with no `--ws-auth` is unauthenticated by design, and on a
+multi-user box every local account can reach that approval surface. Two fixes, both verified:
+
+```bash
+# Best — the socket is created srw------- (0600), so file permissions do the gating.
+codex app-server --listen unix://"$XDG_RUNTIME_DIR"/codex-as.sock
+
+# Or keep ws:// and authenticate it. --ws-auth is honoured on loopback too: without the
+# header the upgrade gets 401, with it 101.
+codex app-server --listen ws://127.0.0.1:7777 \
+  --ws-auth capability-token --ws-token-file ~/.config/codex-as.token
+```
 
 What Lane B uniquely buys: `turn/steer` (inject correction mid-turn), `turn/interrupt`,
 `thread/fork` (variants off a shared prefix), `account/rateLimits/read`, and
