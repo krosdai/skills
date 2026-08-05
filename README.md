@@ -47,6 +47,18 @@ npx skills add https://github.com/xdanger/skills --skill orchestrate-agents
 └── CLAUDE.md                → AGENTS.md
 ```
 
+## Development
+
+Install [mise](https://mise.jdx.dev/installing-mise.html), then provision the pinned
+AutoCorrect release and JavaScript dependencies:
+
+```bash
+mise install
+pnpm install --frozen-lockfile
+```
+
+Run `pnpm lint` to check the repository or `pnpm format` to apply formatting fixes.
+
 ## License
 
 Skills may have individual licenses. See each skill directory for details.

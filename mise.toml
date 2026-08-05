@@ -1,7 +1,10 @@
 # AutoCorrect is installed from GitHub releases because the npm package does
 # not provide a Linux arm64 binary.
+[settings]
+lockfile = true
+
 [tools]
-"github:huacnlee/autocorrect" = "2.16"
+"github:huacnlee/autocorrect" = "2.16.3"
 
 [tasks]
 "autocorrect:fix" = ["autocorrect --fix ."]
