@@ -119,11 +119,11 @@ for spec in "${TASKS[@]}"; do
     codex | grok) ;;
     *) echo "$t bad-lane-$lane" >> "$LOG/exit-codes"; continue ;;
   esac
-  # Only codex tasks need the account, so an all-grok fan-out runs fine without codex. This
-  # deliberately demands a stored login: `run_codex` strips CODEX_API_KEY, so on a host where
-  # that variable IS the credential (CI, typically), drop the `env -u` and accept metered
-  # billing — do not just create an empty auth.json.
-  if [ "$lane" = codex ] && [ ! -f "$CODEX_HOME/auth.json" ]; then
+  # Only codex tasks need the account, so an all-grok fan-out runs fine without codex. Accept
+  # either credential: a stored login, or CODEX_API_KEY where that IS the credential (CI,
+  # typically) — in which case also drop `run_codex`'s `env -u`, and accept that the two then
+  # bill differently. Never paper over a missing account by creating an empty auth.json.
+  if [ "$lane" = codex ] && [ ! -f "$CODEX_HOME/auth.json" ] && [ -z "$CODEX_API_KEY" ]; then
     echo "$t no-codex-auth-in-$CODEX_HOME" >> "$LOG/exit-codes"; continue
   fi
   # Never launch a worker into a tree you failed to create — on a re-run the add fails
@@ -210,7 +210,9 @@ actually spends; `reachability mode` describes only the probe, and `auth env var
 reports presence, never precedence:
 
 ```bash
-codex doctor --json | jq -r '.checks[]|select(.id=="network.websocket_reachability").details["auth mode"]'
+# Mirror `run_codex`'s `env -u`, or you measure your own credential rather than the workers'.
+env -u CODEX_API_KEY codex doctor --json |
+  jq -r '.checks[]|select(.id=="network.websocket_reachability").details["auth mode"]'
 ```
 
 Scope that to Lane A. On this build the app-server lane ignored `CODEX_API_KEY` and spent the
