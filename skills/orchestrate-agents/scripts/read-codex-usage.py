@@ -27,22 +27,12 @@ def parse_timestamp(value: Any) -> float | None:
 
 def latest_rate_limits(sessions_dir: Path) -> tuple[dict[str, Any], Path] | None:
     try:
-        session_files = sorted(
-            (
-                (path.stat().st_mtime, path)
-                for path in sessions_dir.rglob("*.jsonl")
-                if path.is_file()
-            ),
-            reverse=True,
-        )
+        session_files = list(sessions_dir.rglob("*.jsonl"))
     except OSError:
         return None
 
     latest: tuple[float, dict[str, Any], Path] | None = None
-    for modified_at, path in session_files:
-        if latest is not None and modified_at <= latest[0]:
-            break
-
+    for path in session_files:
         try:
             with path.open(encoding="utf-8") as session:
                 for line in session:
@@ -119,6 +109,11 @@ def sample_profile(
         "login_mode": mode,
         "status": "no_snapshot",
         "schedulable": False,
+        "snapshot_at": None,
+        "snapshot_age_seconds": None,
+        "session_path": None,
+        "effective_remaining_percent": None,
+        "rate_limits": None,
     }
 
     snapshot = latest_rate_limits(codex_home / "sessions")
@@ -131,6 +126,7 @@ def sample_profile(
     event, session_path = snapshot
     observed_at = parse_timestamp(event.get("timestamp"))
     if observed_at is None:
+        record["status"] = "invalid_snapshot"
         return record
 
     rate_limits = event["payload"]["rate_limits"]
