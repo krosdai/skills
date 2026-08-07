@@ -201,9 +201,13 @@ def sample_profile(
     windows = [rate_limits.get("primary"), rate_limits.get("secondary")]
     remaining: list[float] = []
     reset_times: list[float] = []
+    malformed_window = False
     for window in windows:
+        if window is None:
+            continue
         window_remaining = remaining_percent(window)
-        if not isinstance(window, dict) or window_remaining is None:
+        if window_remaining is None:
+            malformed_window = True
             continue
         remaining.append(window_remaining)
         reset_at = parse_timestamp(window.get("resets_at"))
@@ -235,7 +239,7 @@ def sample_profile(
         status = "auth_error"
     elif mode != "chatgpt":
         status = "not_chatgpt"
-    elif not remaining:
+    elif not remaining or malformed_window:
         status = "invalid_snapshot"
     elif stale:
         status = "stale"
