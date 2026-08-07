@@ -172,7 +172,6 @@ def sample_profile(
     windows = [rate_limits.get("primary"), rate_limits.get("secondary")]
     remaining: list[float] = []
     reset_times: list[float] = []
-    invalid_reset = False
     for window in windows:
         window_remaining = remaining_percent(window)
         if not isinstance(window, dict) or window_remaining is None:
@@ -188,9 +187,7 @@ def sample_profile(
                     relative_reset = math.nan
                 if math.isfinite(relative_reset) and relative_reset >= 0:
                     reset_at = observed_at + relative_reset
-        if reset_at is None:
-            invalid_reset = True
-        else:
+        if reset_at is not None:
             reset_times.append(reset_at)
     clock_skew_seconds = observed_at - sampled_at
     age_seconds = max(0, int(-clock_skew_seconds))
@@ -204,7 +201,7 @@ def sample_profile(
         status = "auth_error"
     elif mode != "chatgpt":
         status = "not_chatgpt"
-    elif not remaining or invalid_reset:
+    elif not remaining:
         status = "invalid_snapshot"
     elif stale:
         status = "stale"
