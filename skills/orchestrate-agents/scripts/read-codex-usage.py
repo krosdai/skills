@@ -145,7 +145,7 @@ def login_mode(codex_home: Path, codex: str) -> str:
         for line in output.splitlines()
         if line.strip()
     ]
-    if "logged in using chatgpt" in status_lines:
+    if any(line.startswith("logged in using chatgpt") for line in status_lines):
         return "chatgpt"
     if any(line.startswith("logged in using an api key") for line in status_lines):
         return "other"
