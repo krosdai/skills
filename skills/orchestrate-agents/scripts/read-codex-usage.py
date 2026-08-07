@@ -85,19 +85,40 @@ def latest_in_file(path: Path) -> tuple[float, dict[str, Any], Path] | None:
     return latest
 
 
-def latest_rate_limits(sessions_dir: Path) -> tuple[dict[str, Any], Path] | None:
+def latest_rate_limits(
+    sessions_dir: Path, not_before: float
+) -> tuple[dict[str, Any], Path] | None:
+    session_files: list[tuple[float, Path]] = []
     try:
-        session_files = list(sessions_dir.rglob("*.jsonl"))
+        for path in sessions_dir.rglob("*.jsonl"):
+            try:
+                metadata = path.stat()
+            except OSError:
+                continue
+            session_files.append((max(metadata.st_mtime, metadata.st_ctime), path))
     except OSError:
         return None
+    session_files.sort(reverse=True)
 
     latest: tuple[float, dict[str, Any], Path] | None = None
-    for path in session_files:
+    older_start = len(session_files)
+    for index, (changed_at, path) in enumerate(session_files):
+        if changed_at < not_before:
+            older_start = index
+            break
         candidate = latest_in_file(path)
         if candidate is not None and (latest is None or candidate[0] > latest[0]):
             latest = candidate
 
-    return None if latest is None else (latest[1], latest[2])
+    if latest is not None:
+        return latest[1], latest[2]
+
+    for _, path in session_files[older_start:]:
+        candidate = latest_in_file(path)
+        if candidate is not None:
+            return candidate[1], candidate[2]
+
+    return None
 
 
 def login_mode(codex_home: Path, codex: str) -> str:
@@ -118,7 +139,10 @@ def login_mode(codex_home: Path, codex: str) -> str:
     if result.returncode != 0:
         return "unavailable"
     status_lines = [
-        line.strip().casefold() for line in result.stdout.splitlines() if line.strip()
+        line.strip().casefold()
+        for output in (result.stdout, result.stderr)
+        for line in output.splitlines()
+        if line.strip()
     ]
     if any(line.startswith("logged in using chatgpt") for line in status_lines):
         return "chatgpt"
@@ -141,7 +165,8 @@ def sample_profile(
     max_age: int,
 ) -> dict[str, Any]:
     mode = login_mode(codex_home, codex)
-    snapshot = latest_rate_limits(codex_home / "sessions")
+    scan_started_at = datetime.now(timezone.utc).timestamp()
+    snapshot = latest_rate_limits(codex_home / "sessions", scan_started_at - max_age)
     sampled_at = datetime.now(timezone.utc).timestamp()
     record: dict[str, Any] = {
         "profile": profile,

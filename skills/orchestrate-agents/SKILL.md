@@ -35,11 +35,12 @@ Maintain an explicit server-to-`CODEX_HOME` inventory. Before fan-out, periodica
 fleet runs, and after worker completion or a rate-limit response, run
 `scripts/read-codex-usage.py` for every profile and persist its JSON Lines output with the fleet
 state. It derives the newest `token_count.rate_limits` event across each profile's session logs
-by reading backward only to each file's latest matching event, and verifies that
-`codex login status` reports ChatGPT authentication. Pass one `--home PROFILE=CODEX_HOME` per
-server and set `--max-age` to the fleet's freshness tolerance. Consume `status`, `schedulable`,
-`snapshot_age_seconds`, `effective_remaining_percent`, and the raw `rate_limits`; one bad profile
-remains a data record rather than aborting the sample round.
+by comparing events in files changed within the freshness window, falling back to older logs only
+when no recent snapshot exists, and verifies that `codex login status` reports ChatGPT
+authentication. Pass one `--home PROFILE=CODEX_HOME` per server and set `--max-age` to the fleet's
+freshness tolerance. Consume `status`, `schedulable`, `snapshot_age_seconds`,
+`effective_remaining_percent`, and the raw `rate_limits`; one bad profile remains a data record
+rather than aborting the sample round.
 
 Treat this as an observed snapshot, not a live billing query. Session logs refresh only when
 Codex emits a usage event. Never describe a stale or post-reset snapshot as current; use a real,
