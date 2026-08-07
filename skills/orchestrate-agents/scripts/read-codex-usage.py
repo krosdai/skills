@@ -237,7 +237,7 @@ def sample_profile(
         status = "invalid_snapshot"
     elif stale:
         status = "stale"
-    elif limit_reached or spend_control:
+    elif limit_reached or spend_control or min(remaining) <= 0:
         status = "exhausted"
 
     record.update(
