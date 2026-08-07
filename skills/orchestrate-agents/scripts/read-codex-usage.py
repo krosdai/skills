@@ -34,7 +34,7 @@ def latest_rate_limits(sessions_dir: Path) -> tuple[dict[str, Any], Path] | None
     latest: tuple[float, dict[str, Any], Path] | None = None
     for path in session_files:
         try:
-            with path.open(encoding="utf-8") as session:
+            with path.open(encoding="utf-8", errors="replace") as session:
                 for line in session:
                     try:
                         event = json.loads(line)
@@ -99,9 +99,10 @@ def sample_profile(
     codex_home: Path,
     codex: str,
     max_age: int,
-    sampled_at: float,
 ) -> dict[str, Any]:
     mode = login_mode(codex_home, codex)
+    snapshot = latest_rate_limits(codex_home / "sessions")
+    sampled_at = datetime.now(timezone.utc).timestamp()
     record: dict[str, Any] = {
         "profile": profile,
         "codex_home": str(codex_home),
@@ -116,7 +117,6 @@ def sample_profile(
         "rate_limits": None,
     }
 
-    snapshot = latest_rate_limits(codex_home / "sessions")
     if snapshot is None:
         record["status"] = "auth_error" if mode == "unavailable" else "no_snapshot"
         if mode == "other":
@@ -198,11 +198,10 @@ def main() -> int:
     if args.max_age < 0:
         parser.error("--max-age must be non-negative")
 
-    sampled_at = datetime.now(timezone.utc).timestamp()
     for profile, codex_home in args.home:
         print(
             json.dumps(
-                sample_profile(profile, codex_home, args.codex, args.max_age, sampled_at),
+                sample_profile(profile, codex_home, args.codex, args.max_age),
                 separators=(",", ":"),
                 sort_keys=True,
             )
