@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -14,10 +15,19 @@ from typing import Any
 
 
 def parse_timestamp(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
     if isinstance(value, (int, float)):
-        return float(value)
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else None
     if not isinstance(value, str):
         return None
+
+    try:
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else None
+    except ValueError:
+        pass
 
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
@@ -25,43 +35,70 @@ def parse_timestamp(value: Any) -> float | None:
         return None
 
 
-def latest_rate_limits(sessions_dir: Path) -> tuple[dict[str, Any], Path] | None:
+def latest_in_file(path: Path) -> tuple[float, dict[str, Any], Path] | None:
+    latest: tuple[float, dict[str, Any], Path] | None = None
     try:
-        session_files = list(sessions_dir.rglob("*.jsonl"))
+        with path.open(encoding="utf-8", errors="replace") as session:
+            for line in session:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+
+                payload = event.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                if payload.get("type") != "token_count" or not isinstance(
+                    payload.get("rate_limits"), dict
+                ):
+                    continue
+
+                observed_at = parse_timestamp(event.get("timestamp"))
+                if observed_at is None:
+                    continue
+                if latest is None or observed_at > latest[0]:
+                    latest = (observed_at, event, path)
     except OSError:
         return None
+    return latest
+
+
+def latest_rate_limits(
+    sessions_dir: Path, not_before: float
+) -> tuple[dict[str, Any], Path] | None:
+    session_files: list[tuple[float, Path]] = []
+    try:
+        for path in sessions_dir.rglob("*.jsonl"):
+            try:
+                metadata = path.stat()
+            except OSError:
+                continue
+            session_files.append((max(metadata.st_mtime, metadata.st_ctime), path))
+    except OSError:
+        return None
+    session_files.sort(reverse=True)
 
     latest: tuple[float, dict[str, Any], Path] | None = None
-    for path in session_files:
-        try:
-            with path.open(encoding="utf-8", errors="replace") as session:
-                for line in session:
-                    try:
-                        event = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if not isinstance(event, dict):
-                        continue
+    older_start = len(session_files)
+    for index, (changed_at, path) in enumerate(session_files):
+        if changed_at < not_before:
+            older_start = index
+            break
+        candidate = latest_in_file(path)
+        if candidate is not None and (latest is None or candidate[0] > latest[0]):
+            latest = candidate
 
-                    payload = event.get("payload")
-                    if not isinstance(payload, dict):
-                        continue
-                    if payload.get("type") != "token_count" or not isinstance(
-                        payload.get("rate_limits"), dict
-                    ):
-                        continue
+    if latest is not None:
+        return latest[1], latest[2]
 
-                    observed_at = parse_timestamp(event.get("timestamp"))
-                    if observed_at is None:
-                        continue
-                    if latest is None or observed_at > latest[0]:
-                        latest = (observed_at, event, path)
-        except OSError:
-            continue
+    for _, path in session_files[older_start:]:
+        candidate = latest_in_file(path)
+        if candidate is not None:
+            return candidate[1], candidate[2]
 
-    if latest is None:
-        return None
-    return latest[1], latest[2]
+    return None
 
 
 def login_mode(codex_home: Path, codex: str) -> str:
@@ -79,17 +116,21 @@ def login_mode(codex_home: Path, codex: str) -> str:
     except (OSError, subprocess.TimeoutExpired):
         return "unavailable"
 
-    status_text = f"{result.stdout}\n{result.stderr}"
     if result.returncode != 0:
         return "unavailable"
-    return "chatgpt" if "chatgpt" in status_text.lower() else "other"
+    status_lines = [
+        line.strip().casefold() for line in result.stdout.splitlines() if line.strip()
+    ]
+    if not status_lines:
+        return "unavailable"
+    return "chatgpt" if status_lines[0] == "logged in using chatgpt" else "other"
 
 
 def remaining_percent(window: Any) -> float | None:
     if not isinstance(window, dict):
         return None
     used = window.get("used_percent")
-    if not isinstance(used, (int, float)):
+    if isinstance(used, bool) or not isinstance(used, (int, float)):
         return None
     return max(0.0, min(100.0, 100.0 - float(used)))
 
@@ -101,7 +142,8 @@ def sample_profile(
     max_age: int,
 ) -> dict[str, Any]:
     mode = login_mode(codex_home, codex)
-    snapshot = latest_rate_limits(codex_home / "sessions")
+    scan_started_at = datetime.now(timezone.utc).timestamp()
+    snapshot = latest_rate_limits(codex_home / "sessions", scan_started_at - max_age)
     sampled_at = datetime.now(timezone.utc).timestamp()
     record: dict[str, Any] = {
         "profile": profile,
@@ -132,13 +174,27 @@ def sample_profile(
     rate_limits = event["payload"]["rate_limits"]
     windows = [rate_limits.get("primary"), rate_limits.get("secondary")]
     remaining = [value for value in map(remaining_percent, windows) if value is not None]
-    reset_times = [
-        window.get("resets_at")
-        for window in windows
-        if isinstance(window, dict) and isinstance(window.get("resets_at"), (int, float))
-    ]
+    reset_times: list[float] = []
+    invalid_reset = False
+    for window in windows:
+        if not isinstance(window, dict):
+            continue
+        reset_at = parse_timestamp(window.get("resets_at"))
+        if reset_at is None:
+            resets_in = window.get("resets_in_seconds")
+            if not isinstance(resets_in, bool):
+                try:
+                    relative_reset = float(resets_in)
+                except (TypeError, ValueError):
+                    relative_reset = math.nan
+                if math.isfinite(relative_reset) and relative_reset >= 0:
+                    reset_at = observed_at + relative_reset
+        if reset_at is None:
+            invalid_reset = True
+        else:
+            reset_times.append(reset_at)
     age_seconds = max(0, int(sampled_at - observed_at))
-    reset_elapsed = any(float(reset_at) <= sampled_at for reset_at in reset_times)
+    reset_elapsed = any(reset_at <= sampled_at for reset_at in reset_times)
     stale = age_seconds > max_age or reset_elapsed
     limit_reached = rate_limits.get("rate_limit_reached_type") is not None
     spend_control = bool(rate_limits.get("spend_control_reached"))
@@ -148,7 +204,7 @@ def sample_profile(
         status = "auth_error"
     elif mode != "chatgpt":
         status = "not_chatgpt"
-    elif not remaining:
+    elif not remaining or invalid_reset:
         status = "invalid_snapshot"
     elif stale:
         status = "stale"
