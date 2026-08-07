@@ -87,7 +87,7 @@ def latest_in_file(path: Path) -> tuple[float, dict[str, Any], Path] | None:
 
 def latest_rate_limits(
     sessions_dir: Path, not_before: float
-) -> tuple[dict[str, Any], Path] | None:
+) -> tuple[dict[str, Any], Path, bool] | None:
     session_files: list[tuple[float, Path]] = []
     try:
         for path in sessions_dir.rglob("*.jsonl"):
@@ -111,12 +111,12 @@ def latest_rate_limits(
             latest = candidate
 
     if latest is not None:
-        return latest[1], latest[2]
+        return latest[1], latest[2], True
 
     for _, path in session_files[older_start:]:
         candidate = latest_in_file(path)
         if candidate is not None:
-            return candidate[1], candidate[2]
+            return candidate[1], candidate[2], False
 
     return None
 
@@ -129,8 +129,9 @@ def login_mode(codex_home: Path, codex: str) -> str:
             [codex, "login", "status"],
             check=False,
             capture_output=True,
+            encoding="utf-8",
             env=environment,
-            text=True,
+            errors="replace",
             timeout=15,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -188,7 +189,7 @@ def sample_profile(
             record["status"] = "not_chatgpt"
         return record
 
-    event, session_path = snapshot
+    event, session_path, metadata_fresh = snapshot
     observed_at = parse_timestamp(event.get("timestamp"))
     if observed_at is None:
         record["status"] = "invalid_snapshot"
@@ -218,7 +219,12 @@ def sample_profile(
     clock_skew_seconds = observed_at - sampled_at
     age_seconds = max(0, int(-clock_skew_seconds))
     reset_elapsed = any(reset_at <= sampled_at for reset_at in reset_times)
-    stale = age_seconds > max_age or reset_elapsed or clock_skew_seconds > 60
+    stale = (
+        not metadata_fresh
+        or age_seconds > max_age
+        or reset_elapsed
+        or clock_skew_seconds > 60
+    )
     limit_reached = rate_limits.get("rate_limit_reached_type") is not None
     spend_control = bool(rate_limits.get("spend_control_reached"))
 

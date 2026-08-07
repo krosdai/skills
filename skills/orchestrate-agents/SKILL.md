@@ -36,7 +36,7 @@ fleet runs, and after worker completion or a rate-limit response, run
 `scripts/read-codex-usage.py` for every profile and persist its JSON Lines output with the fleet
 state. It derives the newest `token_count.rate_limits` event across each profile's session logs
 by comparing events in files changed within the freshness window, falling back to older logs only
-when no recent snapshot exists, and verifies that `codex login status` reports ChatGPT
+as stale diagnostic evidence, and verifies that `codex login status` reports ChatGPT
 authentication. Pass one `--home PROFILE=CODEX_HOME` per server and set `--max-age` to the fleet's
 freshness tolerance. Consume `status`, `schedulable`, `snapshot_age_seconds`,
 `effective_remaining_percent`, and the raw `rate_limits`; one bad profile remains a data record
