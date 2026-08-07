@@ -59,6 +59,7 @@ def reverse_lines(path: Path, chunk_size: int = 65536) -> Iterator[bytes]:
 
 
 def latest_in_file(path: Path) -> tuple[float, dict[str, Any], Path] | None:
+    latest: tuple[float, dict[str, Any], Path] | None = None
     try:
         for raw_line in reverse_lines(path):
             try:
@@ -77,11 +78,11 @@ def latest_in_file(path: Path) -> tuple[float, dict[str, Any], Path] | None:
                 continue
 
             observed_at = parse_timestamp(event.get("timestamp"))
-            if observed_at is not None:
-                return observed_at, event, path
+            if observed_at is not None and (latest is None or observed_at > latest[0]):
+                latest = observed_at, event, path
     except OSError:
         return None
-    return None
+    return latest
 
 
 def latest_rate_limits(sessions_dir: Path) -> tuple[dict[str, Any], Path] | None:
