@@ -63,4 +63,6 @@ Run `pnpm lint` to check the repository or `pnpm format` to apply formatting fix
 
 ## License
 
-Skills may have individual licenses. See each skill directory for details.
+Repository-owned content is licensed under the [MIT License](LICENSE). Bundled third-party
+content retains its original terms, including the
+[skill-creator license](.agents/skills/skill-creator/LICENSE.txt).
