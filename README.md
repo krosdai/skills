@@ -63,4 +63,5 @@ Run `pnpm lint` to check the repository or `pnpm format` to apply formatting fix
 
 ## License
 
-Skills may have individual licenses. See each skill directory for details.
+This repository is licensed under the [MIT License](LICENSE). Third-party content retains
+its original license terms.
