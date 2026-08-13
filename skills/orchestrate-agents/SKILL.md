@@ -187,7 +187,8 @@ failed terminal state.
 
 ### Lane B (codex default)
 
-- Spawn a dedicated `codex app-server --stdio` child per `CODEX_HOME` and own its lifetime; never
+- Spawn a dedicated `codex app-server --listen stdio://` child per `CODEX_HOME` and own its
+  lifetime; never
   attach orchestration to an operator's already-running daemon or its control socket, where a
   supervisor bug can disturb interactive sessions. One process is one credential profile; a
   multi-account fleet is N processes. If a socket listener is unavoidable, prefer a private Unix
@@ -213,8 +214,11 @@ failed terminal state.
   `expectedTurnId` from that handle — an intended guard against steering the wrong turn.
   Budgets are supervisor-owned: bound each turn by wall clock, escalate `turn/interrupt`, and
   only as a last resort kill the process, which takes every thread in it.
-- A server crash takes down all its threads. On restart, resume from persisted thread IDs via
-  `thread/resume`, then reconcile before retrying: a turn that performed side effects before the
+- A server crash takes down all its threads. On restart or reconnection, resume from persisted
+  thread IDs via `thread/resume`. A lost connection is not a dead server: when the process
+  survived, the original turn may still be running, so read the resumed thread's status and
+  `turn/interrupt` any live turn before dispatching anything — otherwise two turns race the same
+  worktree. Then reconcile before retrying: a turn that performed side effects before the
   crash — commits, file mutations, spawned processes — repeats them if replayed verbatim, and
   replayed thread history is lossy (not every command execution is persisted), so treat the
   worktree and external state as the authority on what already happened. Continue from that
