@@ -29,10 +29,10 @@ file scopes collide, or no independent work remains.
 
 Default codex workers to Lane B. `codex exec` is itself an app-server client, so Lane A runs
 the same runtime behind a downsampling layer that discards the control channel; Lane B removes
-that layer rather than adding a dependency. Its controls turn three chronic failure modes from
-brief-level requests into harness-level enforcement: file scope (per-action approvals),
-corrective rounds (steer without repaying context), and quota evidence (authoritative
-rate-limit reads).
+that layer rather than adding a dependency. Its controls turn chronic failure modes from
+brief-level requests into harness-level enforcement: corrective rounds (steer without repaying
+context), quota evidence (authoritative rate-limit reads), and escalations (per-action approvals
+for actions the sandbox does not already allow).
 
 Fall back to Lane A for codex when a task is genuinely fire-and-forget and a crude external
 wall-clock bound is worth more than steerability, when the supervisor cannot hold a connection
@@ -139,10 +139,12 @@ Anything mechanically enforceable belongs in the harness rather than only in a b
 budgets, worktree creation, accepted lanes, result capture, process cleanup, and failure reporting.
 Repeating an ignored instruction is not control.
 
-In Lane B, the approval channel is the mechanical form of file-scope enforcement: run workers
-with an on-request approval policy, adjudicate each file-change request against the task's
-declared scope, and deny out-of-scope writes. Answer every server-to-client request — an
-unanswered approval hangs the turn.
+In Lane B, answer every server-to-client request — an unanswered approval hangs the turn — and
+adjudicate each one against the task's brief. Do not mistake approvals for file-scope
+enforcement: with a writable worktree sandbox, edits inside the workspace never surface a
+request, so a worker can touch out-of-scope files without asking. Enforce file scope
+mechanically by validating the worktree's actual Git diff against the declared scope before
+integration, and reject the round when it strays.
 
 On every worker exit (Lane A) or turn completion (Lane B), reap processes whose resolved current
 working directory is the worker's resolved worktree or a descendant; the app-server does not reap
@@ -173,9 +175,10 @@ nullable `blocked_reason`. A truthful blocker is better than false success; neve
 `none` to hide skipped work.
 
 Keep strict-schema properties required and use nullable values where absence is meaningful. Treat
-any non-terminal or failed turn status (Lane B) or nonzero exit (Lane A) as no usable final
-result, even when partial edits remain. Distinguish advisory error items from a failed terminal
-state.
+any turn status other than `completed` (Lane B) or any nonzero exit (Lane A) as no usable final
+result, even when partial edits remain — `interrupted` is terminal without being `failed`, and a
+budget-interrupted turn has no schema-conforming answer. Distinguish advisory error items from a
+failed terminal state.
 
 ## Lane-specific rules
 
@@ -193,8 +196,10 @@ state.
   every codex upgrade and treat a resulting compile break as the upgrade signal. Do not build the
   supervisor on experimental-marked methods or fields.
 - Complete the `initialize`/`initialized` handshake and assert that the returned `codexHome`
-  equals the intended profile before dispatching work; do not infer identity from the
-  environment.
+  equals the intended profile before dispatching work. The home assertion does not establish
+  which credential the process will spend: launch the server with a sanitized environment,
+  removing API-key and custom-provider overrides exactly as Lane A requires, because such keys
+  outrank the profile's stored login and `codex login status` does not report them.
 - Start one thread per task via `thread/start` with the worktree as `cwd` and per-thread sandbox,
   approval policy, and config overrides. Start threads non-ephemeral so they persist, and record
   each thread ID in fleet state. Thread creation can restart the configured MCP server set and is
@@ -207,9 +212,11 @@ state.
   only as a last resort kill the process, which takes every thread in it.
 - A server crash takes down all its threads. On restart, resume from persisted thread IDs via
   `thread/resume`, then reconcile before retrying: a turn that performed side effects before the
-  crash — commits, file mutations, spawned processes — repeats them if replayed verbatim. Read
-  the thread history and the worktree state to establish what already happened, and issue a
-  continuation brief scoped to the remainder rather than the original turn.
+  crash — commits, file mutations, spawned processes — repeats them if replayed verbatim, and
+  replayed thread history is lossy (not every command execution is persisted), so treat the
+  worktree and external state as the authority on what already happened. Continue from that
+  reconciled checkpoint with a brief scoped to the remainder, retrying only operations known to
+  be idempotent, rather than re-issuing the original turn.
 
 ### Lane A (grok always; codex fallback)
 
