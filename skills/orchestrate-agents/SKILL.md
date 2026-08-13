@@ -189,7 +189,7 @@ state.
 - Treat stdio as newline-delimited JSON-RPC and Unix or TCP listeners as WebSocket transports. Do
   not reuse stdio framing on sockets.
 - Generate protocol bindings from the installed binary (`codex app-server generate-ts` /
-  `generate-json-schema`); they are version-locked to that binary by construction. Regenerate on
+  `codex app-server generate-json-schema`); they are version-locked to that binary by construction. Regenerate on
   every codex upgrade and treat a resulting compile break as the upgrade signal. Do not build the
   supervisor on experimental-marked methods or fields.
 - Complete the `initialize`/`initialized` handshake and assert that the returned `codexHome`
@@ -205,8 +205,11 @@ state.
   `expectedTurnId` from that handle — an intended guard against steering the wrong turn.
   Budgets are supervisor-owned: bound each turn by wall clock, escalate `turn/interrupt`, and
   only as a last resort kill the process, which takes every thread in it.
-- A server crash takes down all its threads. On reconnect, resume from persisted thread IDs via
-  `thread/resume` and re-issue the interrupted turn rather than rebuilding context from scratch.
+- A server crash takes down all its threads. On restart, resume from persisted thread IDs via
+  `thread/resume`, then reconcile before retrying: a turn that performed side effects before the
+  crash — commits, file mutations, spawned processes — repeats them if replayed verbatim. Read
+  the thread history and the worktree state to establish what already happened, and issue a
+  continuation brief scoped to the remainder rather than the original turn.
 
 ### Lane A (grok always; codex fallback)
 
