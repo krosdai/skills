@@ -44,8 +44,11 @@ it always runs Lane A.
 Maintain an explicit server-to-`CODEX_HOME` inventory. For profiles with a running lane
 server, read capacity in-protocol: `account/rateLimits/read` returns authoritative usage
 (used percent per window, reset time, plan type, credits, spend control, per-limit buckets),
-and `account/rateLimits/updated` pushes revisions mid-turn; fold both into fleet state as they
-arrive.
+and `account/rateLimits/updated` pushes sparse rolling revisions mid-turn. Treat the last full
+read as the snapshot of record: merge an update's present fields into it — an absent or null
+field carries no information and never clears a previously observed value — or refetch the full
+snapshot. Replacing the snapshot with a sparse update overstates capacity wherever the update
+omits a window, credits, or spend-control state.
 
 For profiles without a running server, fall back to `scripts/read-codex-usage.py`. It derives
 the newest `token_count.rate_limits` event across each profile's session logs within the
