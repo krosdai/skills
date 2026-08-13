@@ -42,3 +42,10 @@ When adding a new self-authored skill, create it under `skills/<name>/` and syml
 - Prettier: 96 char line width, double quotes, trailing commas, LF endings
 - Biome: 96 char line width, space indent
 - autocorrect: enforces CJK-ASCII spacing (e.g., "使用 Python 3.11")
+
+## Cursor Cloud specific instructions
+
+- This repo requires Node `>=24` (`package.json` `engines`); Cursor's default image ships Node 22. The committed `.cursor/` environment (Node 24 image + Corepack pnpm + `git-lfs` + `mise`) provides the correct toolchain. For local setup, follow the `mise install` + `pnpm install --frozen-lockfile` flow in `README.md`.
+- There is no automated test suite; `pnpm lint` (see `## Commands`) is the full check.
+- AutoCorrect is only available through `mise` (invoked as `mise run autocorrect:fix` or `mise x -- autocorrect`), not on `PATH` directly. `mise` needs the repo trusted once via `mise trust` before it will read `mise.toml`.
+- Known pre-existing failure: `pnpm lint` fails on `main` because two committed files under `skills/video-generation/` are not Prettier-formatted. This is unrelated to the environment; `pnpm format` fixes them.

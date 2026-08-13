@@ -1,0 +1,8 @@
+{
+  "name": "xdanger.skills",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "user": "node",
+  "install": "mise trust --yes && mise install && pnpm install --frozen-lockfile"
+}
