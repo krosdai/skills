@@ -21,8 +21,12 @@ ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
 
 # mise manages tool versions declared in mise.toml (AutoCorrect). Install the
-# binary to a shared location so every user and shell can invoke it.
-RUN curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh \
+# binary to a shared location so every user and shell can invoke it. Download
+# the installer to a file first so a failed download reliably fails the build
+# (a curl | sh pipeline would mask curl's exit status).
+RUN curl -fsSL https://mise.run -o /tmp/install-mise.sh \
+    && MISE_INSTALL_PATH=/usr/local/bin/mise sh /tmp/install-mise.sh \
+    && rm -f /tmp/install-mise.sh \
     && mise --version
 
 USER node

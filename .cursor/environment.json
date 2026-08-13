@@ -4,5 +4,5 @@
     "dockerfile": "Dockerfile"
   },
   "user": "node",
-  "install": "mise trust && mise install && pnpm install --frozen-lockfile"
+  "install": "mise trust --yes && mise install && pnpm install --frozen-lockfile"
 }
