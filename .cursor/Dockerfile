@@ -32,13 +32,21 @@ RUN corepack enable
 # mise manages tool versions declared in mise.toml (AutoCorrect). Pin a specific
 # release and verify its SHA-256 checksum rather than piping a network-fetched
 # installer into a shell, so the build fails closed on tampering or a truncated
-# download. Update MISE_VERSION/MISE_SHA256 together (checksums are published in
-# the release's SHASUMS256.txt).
+# download. The binary is selected per host architecture (amd64/arm64) so the
+# image works regardless of build platform. Update MISE_VERSION and both
+# checksums together (published in the release's SHASUMS256.txt).
 ARG MISE_VERSION=v2026.8.5
-ARG MISE_SHA256=ee362b6d96c648e27325a8bc7ee866bde4fffc20c88c777c5eb5c3b5c6f3e226
-RUN curl -fsSL "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mise-${MISE_VERSION}-linux-x64" -o /usr/local/bin/mise \
-    && echo "${MISE_SHA256}  /usr/local/bin/mise" | sha256sum -c - \
-    && chmod 0755 /usr/local/bin/mise \
-    && mise --version
+ARG MISE_SHA256_X64=ee362b6d96c648e27325a8bc7ee866bde4fffc20c88c777c5eb5c3b5c6f3e226
+ARG MISE_SHA256_ARM64=d2bde76b1f87ab50b6f456e05332bb02de56a6bf3c5d19343cc3661e5d294681
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+        amd64) mise_arch=x64; mise_sha256="${MISE_SHA256_X64}" ;; \
+        arm64) mise_arch=arm64; mise_sha256="${MISE_SHA256_ARM64}" ;; \
+        *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mise-${MISE_VERSION}-linux-${mise_arch}" -o /usr/local/bin/mise; \
+    echo "${mise_sha256}  /usr/local/bin/mise" | sha256sum -c -; \
+    chmod 0755 /usr/local/bin/mise; \
+    mise --version
 
 USER node
