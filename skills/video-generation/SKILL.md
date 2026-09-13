@@ -125,6 +125,9 @@ scripts/seedance.sh --task-id cgt-example --max-wait 600
 ```
 
 Respects `SEEDANCE_API_KEY`, `SEEDANCE_BASE_URL`, and `SEEDANCE_MODEL` environment variables.
+Use a credential-free HTTP(S) base URL without userinfo, query parameters, or
+fragments. Pass authentication separately through the API-key input; endpoints
+appear in progress and recovery output.
 
 The script validates generation models, bounds HTTP calls and waits by elapsed
 time, and retries transient queries or invalid responses up to five consecutive

@@ -217,6 +217,19 @@ if sys.argv[1:] == ['wait', '#auth-ready']:
 
 
 class VideoTests(unittest.TestCase):
+    def test_credential_bearing_endpoints_are_rejected_before_output_or_requests(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            marker = folder / "curl-called"
+            executable(folder / "curl", f"#!{sys.executable}\nimport os\nfrom pathlib import Path\nPath(os.environ['CURL_MARKER']).touch()\nraise SystemExit(91)\n")
+            env = dict(os.environ, PATH=f"{folder}:{os.environ['PATH']}", SEEDANCE_API_KEY="fixture-key", CURL_MARKER=str(marker))
+            for endpoint in ["https://user:endpoint-secret@example.com", "https://example.com?token=endpoint-secret", "https://example.com/#endpoint-secret"]:
+                with self.subTest(endpoint=endpoint):
+                    result = subprocess.run(["bash", str(VIDEO), "--task-id", "cgt-fixture", "--base-url", endpoint, "--max-wait", "1"], env=env, capture_output=True, text=True, timeout=3)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertNotIn("endpoint-secret", result.stdout + result.stderr)
+                    self.assertFalse(marker.exists())
+
     def run_video(self, responses, resume=False, budget=8, interval=1, download=None, follow_hint=False, api_key_flag=False):
         requests = []
         replies = list(responses)

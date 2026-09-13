@@ -116,6 +116,17 @@ if [[ -z "$API_KEY" ]]; then
   exit 1
 fi
 
+# Base URLs are printed in progress and recovery output. Authentication belongs
+# in the API-key input, not URL userinfo, queries, or fragments.
+URL_AUTHORITY="${BASE_URL#*://}"
+URL_AUTHORITY="${URL_AUTHORITY%%/*}"
+if [[ ( "$BASE_URL" != http://* && "$BASE_URL" != https://* ) ||
+      -z "$URL_AUTHORITY" || "$URL_AUTHORITY" == *@* ||
+      "$BASE_URL" == *\?* || "$BASE_URL" == *\#* ]]; then
+  echo "❌ Use a credential-free HTTP(S) base URL without userinfo, query, or fragment; supply authentication through SEEDANCE_API_KEY or --api-key." >&2
+  exit 1
+fi
+
 # --- Input validation ---
 for value in "$MAX_WAIT" "$POLL_INTERVAL"; do
   if [[ ! "$value" =~ ^[0-9]{1,9}$ ]] || (( 10#$value < 1 )); then
