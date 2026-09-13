@@ -191,7 +191,7 @@ if sys.argv[1:3] == ['get', 'url']:
                         self.assertNotEqual(result.returncode, 0)
                         self.assertEqual(calls, [])
                     else:
-                        selector = "#login-ready, #auth-ready" if name == "authenticated-session.sh" else "#task-ready"
+                        selector = "#auth-ready" if name == "authenticated-session.sh" else "#task-ready"
                         wait_index = calls.index(["wait", selector])
                         self.assertFalse(any(call[0] in ["get", "snapshot", "screenshot", "pdf"] for call in calls[:wait_index]))
                         if fail_wait:
@@ -218,9 +218,34 @@ if sys.argv[1:] == ['wait', '#auth-ready']:
             result = subprocess.run(["bash", str(ROOT / "skills/browser-automation/templates/authenticated-session.sh"), "https://example.com/login"], cwd=folder, env=env, capture_output=True, text=True, timeout=5)
             self.assertEqual(result.returncode, 0, result.stderr)
             calls = [json.loads(line) for line in log.read_text().splitlines()]
-            self.assertIn(["wait", "#login-ready, #auth-ready"], calls)
+            self.assertIn(["wait", "#auth-ready"], calls)
             self.assertIn(["wait", "#login-ready"], calls)
             self.assertIn("Login form structure:", result.stdout)
+            self.assertTrue((folder / "auth-state.json").exists())
+
+    def test_transient_login_form_does_not_discard_valid_state(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            executable(folder / "agent-browser", f"#!{sys.executable}\n" + """import json, os, sys
+from pathlib import Path
+root = Path(os.environ['BROWSER_FIXTURE'])
+with (root / 'calls').open('a') as output:
+    output.write(json.dumps(sys.argv[1:]) + '\\n')
+if sys.argv[1:] == ['wait', '#auth-ready']:
+    (root / 'authenticated').touch()
+if sys.argv[1:3] == ['get', 'url']:
+    print('https://example.com/account' if (root / 'authenticated').exists() else 'https://example.com/login')
+""")
+            state = folder / "auth-state.json"
+            state.write_text('{"fixture":"valid-state"}')
+            env = dict(os.environ, PATH=f"{folder}:{os.environ['PATH']}", BROWSER_FIXTURE=str(folder), LOGIN_READY_SELECTOR="#login-ready", AUTH_READY_SELECTOR="#auth-ready")
+            result = subprocess.run(["bash", str(ROOT / "skills/browser-automation/templates/authenticated-session.sh"), "https://example.com/login"], cwd=folder, env=env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Session restored successfully", result.stdout)
+            self.assertEqual(state.read_text(), '{"fixture":"valid-state"}')
+            calls = [json.loads(line) for line in (folder / "calls").read_text().splitlines()]
+            self.assertIn(["wait", "#auth-ready"], calls)
+            self.assertFalse(any(call[0] == "open" for call in calls))
 
 
 class VideoTests(unittest.TestCase):

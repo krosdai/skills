@@ -136,8 +136,10 @@ element before running a capture or form template. Choose it from
 the page or an initial discovery snapshot; do not ask the user to choose a selector.
 For authentication, set `LOGIN_READY_SELECTOR` and `AUTH_READY_SELECTOR` to
 CSS selectors for the settled login form and authenticated landing content.
-The saved-state path waits for either outcome before checking the URL; fresh
-login discovery waits only for the login form. A generic body element does not establish that asynchronous content is
+The saved-state path first waits for positive authenticated-content evidence.
+If that bounded wait fails, it preserves the state file and inspects the login
+form; a transient form or URL never invalidates saved state. Fresh login discovery
+waits only for the login form. A generic body element does not establish that asynchronous content is
 ready. Customize refs and follow-up commands for the site.
 
 ## References
