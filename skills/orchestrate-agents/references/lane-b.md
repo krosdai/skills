@@ -15,7 +15,7 @@
 - Complete the `initialize`/`initialized` handshake and assert that the returned `codexHome`
   equals the intended profile before dispatching work. The home assertion does not establish
   which credential the process will spend: launch the server with a sanitized environment,
-  removing API-key and custom-provider overrides by removing unintended API-key and custom-provider environment variables, because such keys
+  removing unintended API-key and custom-provider environment variables, because such keys
   outrank the profile's stored login and `codex login status` does not report them.
 - Start one thread per task via `thread/start` with the contract-selected task directory as `cwd` and per-thread sandbox,
   approval policy, and config overrides. Start threads non-ephemeral so they persist, and record
