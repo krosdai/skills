@@ -133,10 +133,12 @@ Re-confirm GREEN immediately before merging — state can change between iterati
    detect allowed methods and prefer merge → squash → rebase
    (`references/github-api.md` §7).
 
-2. **Apply the existing authorization.** An explicit request to merge or deliver
-   the PR authorizes merging after strict GREEN; no extra "hands-off" wording or
+2. **Apply the existing authorization.** An explicit request to merge or land
+   the PR, or an established mandate that clearly includes merging, authorizes
+   merging after strict GREEN; no extra "hands-off" wording or
    repeated confirmation is needed. A request only to inspect, review, watch, or
-   repair does not authorize merging. Ask only when the merge action is outside
+   repair does not authorize merging. "Deliver the PR" alone may mean opening or
+   handing off a ready-for-review PR; it is not sufficient merge authorization. Ask only when the merge action is outside
    the established scope. Required GitHub approvals remain mandatory.
 
 3. **Merge.** `gh pr merge <PR> --merge` (or chosen method).

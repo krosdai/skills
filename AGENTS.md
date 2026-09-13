@@ -24,6 +24,7 @@ Do not include personal credentials, tokens, API keys, local filesystem paths, o
 pnpm lint              # ESLint + Prettier check
 pnpm format            # Prettier + autocorrect (CJK spacing) auto-fix
 pnpm lint:fix          # ESLint fix + format
+python -m unittest discover -s tests -v  # Offline helper regression tests
 ```
 
 ## Git Hooks
@@ -46,6 +47,10 @@ When adding a new self-authored skill, create it under `skills/<name>/` and syml
 ## Cursor Cloud specific instructions
 
 - This repo requires Node `>=24` (`package.json` `engines`); Cursor's default image ships Node 22. The committed `.cursor/` environment (Node 24 image + Corepack pnpm + `git-lfs` + `mise`) provides the correct toolchain. For local setup, follow the `mise install` + `pnpm install --frozen-lockfile` flow in `README.md`.
-- There is no automated test suite; `pnpm lint` (see `## Commands`) is the full check.
+- `pnpm lint` checks formatting and JavaScript/TypeScript lint rules. When changing
+  PR/video helpers or browser readiness templates, also run
+  `python -m unittest discover -s tests -v`. The tests use disposable fixtures and
+  a loopback HTTP server with no production access.
+- Manus client tests run with `node --test skills/manus/scripts/manus_client.test.mjs`
+  and `uv run --no-project --with httpx python -m unittest discover -s skills/manus/scripts -p test_manus_client.py`.
 - AutoCorrect is only available through `mise` (invoked as `mise run autocorrect:fix` or `mise x -- autocorrect`), not on `PATH` directly. `mise` needs the repo trusted once via `mise trust` before it will read `mise.toml`.
-- Known pre-existing failure: `pnpm lint` fails on `main` because two committed files under `skills/video-generation/` are not Prettier-formatted. This is unrelated to the environment; `pnpm format` fixes them.
