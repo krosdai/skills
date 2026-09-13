@@ -46,6 +46,7 @@ done
 case "$INTERVAL" in ''|*[!0-9]*) echo "wait_for_settle: --interval must be a non-negative integer (got '$INTERVAL')" >&2; exit 50 ;; esac
 case "$MAX_WAIT" in ''|*[!0-9]*) echo "wait_for_settle: --max-wait must be a non-negative integer (got '$MAX_WAIT')" >&2; exit 50 ;; esac
 [ "$INTERVAL" -ge 1 ] || { echo "wait_for_settle: --interval must be >= 1" >&2; exit 50; }
+[ "$MAX_WAIT" -ge 1 ] || { echo "wait_for_settle: --max-wait must be >= 1; use pr_status.sh for a single state read" >&2; exit 50; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATUS="$SCRIPT_DIR/pr_status.sh"

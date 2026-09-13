@@ -188,7 +188,8 @@ Re-confirm GREEN immediately before merging — state can change between iterati
 - **Repair-round cap**: default 5; waiting is tracked separately.
 - **Flake re-run policy**: default one re-run per failing check, then escalate.
 - **Wait tuning**: `wait_for_settle.sh --interval` (default 10s) and `--max-wait`
-  (default 1800s per call, with state retained across resumptions).
+  (default 1800s per call, with state retained across resumptions). Both values
+  must be positive; use `pr_status.sh` for a single state read.
 - **Required-only checks**: by default _all_ checks must pass (the user's strict
   definition); optionally relax to "only branch-protection-required checks".
 - **Wait transport**: bounded full-gate polling by default. For repo-admin users on a

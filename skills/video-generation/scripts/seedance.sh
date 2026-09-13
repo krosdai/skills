@@ -372,9 +372,8 @@ while [[ $SECONDS -lt $MAX_WAIT ]]; do
       exit 0
       ;;
     failed|cancelled|canceled|expired)
-      ERROR=$(printf '%s' "$RESULT" | jq -r 'if (.error | type) == "object" then .error.message // .error.code // "no details" else .error // "no details" end' 2>/dev/null || true)
-      echo "❌ Task $STATUS: $ERROR" >&2
-      resume_hint
+      echo "❌ Task $STATUS. Task ID: $TASK_ID" >&2
+      api_diagnostic
       exit 1
       ;;
     queued|running)

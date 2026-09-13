@@ -150,6 +150,13 @@ sys.exit(10)
         self.assertEqual(result.returncode, 50)
         self.assertLess(elapsed, 1)
 
+    def test_zero_wait_budget_is_rejected(self):
+        result, elapsed = self.run_wait("print('unexpected gate read')\n", budget=0)
+        self.assertEqual(result.returncode, 50)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("--max-wait must be >= 1", result.stderr)
+        self.assertLess(elapsed, 1)
+
 
 class BrowserTemplateTests(unittest.TestCase):
     def test_templates_require_and_wait_for_ready_state(self):
@@ -332,6 +339,8 @@ class VideoTests(unittest.TestCase):
                 self.assertEqual(requests, ["GET"])
                 self.assertIn("cgt-test", result.stderr)
                 self.assertLess(elapsed, 1)
+                if code == 200:
+                    self.assertNotIn("Resume:", result.stderr)
 
     def test_invalid_responses_do_not_reset_error_count(self):
         result, requests, elapsed = self.run_video([(200, 'not-json', 0), (200, '{}', 0)], resume=True)
