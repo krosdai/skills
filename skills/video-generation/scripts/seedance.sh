@@ -21,7 +21,8 @@
 #   --api-key KEY        API key (default: $SEEDANCE_API_KEY)
 #   --base-url URL       Base URL (default: $SEEDANCE_BASE_URL or https://ark.cn-beijing.volces.com)
 #   --poll-interval SECS Polling interval (default: 10)
-#   --max-wait SECS      Max wait time (default: 600)
+#   --max-wait SECS      Network/wait budget in seconds (default: 600)
+#   --task-id ID         Resume querying an existing task; never create a new one
 #   --download DIR       Download video to directory
 #
 # Environment:
@@ -49,9 +50,11 @@ GENERATE_AUDIO=true
 WATERMARK=false
 WEB_SEARCH=false
 API_KEY="${SEEDANCE_API_KEY:-}"
+API_KEY_FROM_FLAG=false
 POLL_INTERVAL=10
 MAX_WAIT=600
 DOWNLOAD_DIR=""
+TASK_ID=""
 
 PROMPT=""
 FIRST_IMAGE=""
@@ -83,17 +86,18 @@ while [[ $# -gt 0 ]]; do
     --audio)         require_arg "$1" "${2:-}"; GENERATE_AUDIO="$2"; shift 2 ;;
     --watermark)     WATERMARK=true; shift ;;
     --web-search)    WEB_SEARCH=true; shift ;;
-    --api-key)       require_arg "$1" "${2:-}"; API_KEY="$2"; shift 2 ;;
+    --api-key)       require_arg "$1" "${2:-}"; API_KEY="$2"; API_KEY_FROM_FLAG=true; shift 2 ;;
     --base-url)      require_arg "$1" "${2:-}"; BASE_URL="$2"; shift 2 ;;
     --poll-interval) require_arg "$1" "${2:-}"; POLL_INTERVAL="$2"; shift 2 ;;
     --max-wait)      require_arg "$1" "${2:-}"; MAX_WAIT="$2"; shift 2 ;;
+    --task-id)       require_arg "$1" "${2:-}"; TASK_ID="$2"; shift 2 ;;
     --download)      require_arg "$1" "${2:-}"; DOWNLOAD_DIR="$2"; shift 2 ;;
     -*)              echo "Unknown option: $1" >&2; exit 1 ;;
     *)               PROMPT="$1"; shift ;;
   esac
 done
 
-if [[ -z "$PROMPT" ]]; then
+if [[ -z "$PROMPT" && -z "$TASK_ID" ]]; then
   echo "Usage: seedance.sh \"prompt\" [options]" >&2
   echo "" >&2
   echo "Models:" >&2
@@ -112,7 +116,31 @@ if [[ -z "$API_KEY" ]]; then
   exit 1
 fi
 
+# Base URLs are printed in progress and recovery output. Authentication belongs
+# in the API-key input, not URL userinfo, queries, or fragments.
+URL_AUTHORITY="${BASE_URL#*://}"
+URL_AUTHORITY="${URL_AUTHORITY%%/*}"
+if [[ ( "$BASE_URL" != http://* && "$BASE_URL" != https://* ) ||
+      -z "$URL_AUTHORITY" || "$URL_AUTHORITY" == *@* ||
+      "$BASE_URL" == *\?* || "$BASE_URL" == *\#* ]]; then
+  echo "❌ Use a credential-free HTTP(S) base URL without userinfo, query, or fragment; supply authentication through SEEDANCE_API_KEY or --api-key." >&2
+  exit 1
+fi
+
 # --- Input validation ---
+for value in "$MAX_WAIT" "$POLL_INTERVAL"; do
+  if [[ ! "$value" =~ ^[0-9]{1,9}$ ]] || (( 10#$value < 1 )); then
+    echo "❌ --max-wait and --poll-interval must be positive integers." >&2
+    exit 1
+  fi
+done
+MAX_WAIT=$((10#$MAX_WAIT))
+POLL_INTERVAL=$((10#$POLL_INTERVAL))
+if [[ -n "$TASK_ID" && ! "$TASK_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  echo "❌ Invalid task ID." >&2
+  exit 1
+fi
+
 HAS_FRAME=$([[ -n "$FIRST_IMAGE" || -n "$LAST_IMAGE" ]] && echo true || echo false)
 HAS_REF=$([[ ${#REF_IMAGES[@]} -gt 0 || ${#REF_VIDEOS[@]} -gt 0 || ${#REF_AUDIOS[@]} -gt 0 ]] && echo true || echo false)
 
@@ -142,7 +170,7 @@ if [[ "$WEB_SEARCH" == "true" && ("$HAS_FRAME" == "true" || "$HAS_REF" == "true"
 fi
 
 # --- Model validation: only Seedance 2.0 series allowed ---
-if [[ "$MODEL" != *"seedance-2-0"* ]]; then
+if [[ -z "$TASK_ID" && "$MODEL" != *"seedance-2-0"* ]]; then
   echo "❌ Only Seedance 2.0 models are supported." >&2
   echo "   Allowed: doubao-seedance-2-0-260128 (quality) or doubao-seedance-2-0-fast-260128 (fast)" >&2
   echo "   Got: $MODEL" >&2
@@ -165,166 +193,210 @@ extract_video_url() {
   ' 2>/dev/null || echo ""
 }
 
-# --- Helper: curl with retry for resilience ---
-curl_retry() {
-  curl --retry 3 --retry-delay 2 --retry-connrefused -sS "$@"
+# Report only the provider's diagnostic fields, never the full response body.
+api_diagnostic() {
+  local message
+  message=$(printf '%s' "$RESULT" | jq -r '
+    .error as $error |
+    if ($error | type) == "object" then
+      [$error.code, $error.message] | map(select(type == "string")) | join(": ")
+    elif ($error | type) == "string" then $error
+    else "" end | gsub("[[:cntrl:]]"; " ")
+  ' 2>/dev/null || true)
+  message=${message//"$API_KEY"/[REDACTED]}
+  [[ -z "$message" ]] || printf '   Provider: %.1000s\n' "$message" >&2
 }
 
-# Build content array as JSON
-CONTENT='[]'
+# One bounded HTTP attempt. GET retries belong to the polling loop;
+# a creation POST is never replayed automatically after an ambiguous failure.
+RESPONSE_FILE=$(mktemp "${TMPDIR:-/tmp}/seedance.XXXXXX")
+trap 'rm -f "$RESPONSE_FILE"' EXIT
+SECONDS=0
+RESULT=""
+HTTP_STATUS=""
+request() {
+  local remaining=$((MAX_WAIT - SECONDS))
+  [[ $remaining -gt 0 ]] || return 2
+  local connect_timeout=10 rc=0
+  [[ $remaining -lt $connect_timeout ]] && connect_timeout=$remaining
+  HTTP_STATUS=$(curl -q --retry 0 --connect-timeout "$connect_timeout" \
+    --max-time "$remaining" -sS -o "$RESPONSE_FILE" -w '%{http_code}' "$@") || rc=$?
+  RESULT=$(<"$RESPONSE_FILE")
+  if [[ $rc -ne 0 ]]; then
+    return 2
+  fi
+  case "$HTTP_STATUS" in
+    2??) return 0 ;;
+    408|429|5??) return 2 ;;
+    *) echo "❌ HTTP $HTTP_STATUS; request rejected." >&2; api_diagnostic; return 1 ;;
+  esac
+}
 
-# Add text prompt
-CONTENT=$(echo "$CONTENT" | jq --arg t "$PROMPT" '. + [{"type":"text","text":$t}]')
+resume_hint() {
+  echo "   Task ID: $TASK_ID" >&2
+  printf '   Resume:' >&2
+  printf ' %q' "${BASH_SOURCE[0]}" --task-id "$TASK_ID" --base-url "$BASE_URL" \
+    --max-wait "$MAX_WAIT" --poll-interval "$POLL_INTERVAL" >&2
+  if [[ -n "$DOWNLOAD_DIR" ]]; then
+    printf ' %q' --download "$DOWNLOAD_DIR" >&2
+  fi
+  printf '\n' >&2
+  if [[ "$API_KEY_FROM_FLAG" == true ]]; then
+    echo "   Credentials came from --api-key. Securely set SEEDANCE_API_KEY to the same value before resuming; the command omits secrets." >&2
+  else
+    echo "   Keep the same credentials in SEEDANCE_API_KEY; the command omits secrets." >&2
+  fi
+}
 
-# Determine mode and add media
-if [[ -n "$FIRST_IMAGE" && -n "$LAST_IMAGE" ]]; then
-  # First + Last frame mode (2.0 only, validated above)
-  CONTENT=$(echo "$CONTENT" | jq --arg u "$FIRST_IMAGE" \
-    '. + [{"type":"image_url","image_url":{"url":$u},"role":"first_frame"}]')
-  CONTENT=$(echo "$CONTENT" | jq --arg u "$LAST_IMAGE" \
-    '. + [{"type":"image_url","image_url":{"url":$u},"role":"last_frame"}]')
-elif [[ -n "$FIRST_IMAGE" ]]; then
-  # First frame mode (2.0 only, validated above)
-  CONTENT=$(echo "$CONTENT" | jq --arg u "$FIRST_IMAGE" \
-    '. + [{"type":"image_url","image_url":{"url":$u},"role":"first_frame"}]')
-else
-  # Multi-modal reference mode (2.0 only, validated above)
-  for img in "${REF_IMAGES[@]+"${REF_IMAGES[@]}"}"; do
-    CONTENT=$(echo "$CONTENT" | jq --arg u "$img" \
-      '. + [{"type":"image_url","image_url":{"url":$u},"role":"reference_image"}]')
-  done
-  for vid in "${REF_VIDEOS[@]+"${REF_VIDEOS[@]}"}"; do
-    CONTENT=$(echo "$CONTENT" | jq --arg u "$vid" \
-      '. + [{"type":"video_url","video_url":{"url":$u},"role":"reference_video"}]')
-  done
-  for aud in "${REF_AUDIOS[@]+"${REF_AUDIOS[@]}"}"; do
-    CONTENT=$(echo "$CONTENT" | jq --arg u "$aud" \
-      '. + [{"type":"audio_url","audio_url":{"url":$u},"role":"reference_audio"}]')
-  done
-fi
-
-# Build request body
-BODY=$(jq -n \
-  --arg model "$MODEL" \
-  --argjson content "$CONTENT" \
-  --arg resolution "$RESOLUTION" \
-  --arg ratio "$RATIO" \
-  --argjson duration "$DURATION" \
-  --argjson watermark "$WATERMARK" \
-  --argjson generate_audio "$GENERATE_AUDIO" \
-  '{model:$model, content:$content, resolution:$resolution, ratio:$ratio, duration:$duration, watermark:$watermark, generate_audio:$generate_audio}')
-
-# Add web search tool if requested (2.0 only, validated above)
-if [[ "$WEB_SEARCH" == "true" ]]; then
-  BODY=$(echo "$BODY" | jq '. + {tools:[{type:"web_search"}]}')
-fi
-
-echo "🎬 Creating video generation task..."
-echo "   Model: $MODEL"
-echo "   Base URL: $BASE_URL"
-echo "   Resolution: $RESOLUTION | Ratio: $RATIO | Duration: ${DURATION}s"
-echo "   Audio: $GENERATE_AUDIO"
-
-# Create task (with retry)
-RESPONSE=$(curl_retry -X POST "$TASKS_URL" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $API_KEY" \
-  -d "$BODY")
-
-TASK_ID=$(echo "$RESPONSE" | jq -r '.id // .task_id // empty' 2>/dev/null || true)
 if [[ -z "$TASK_ID" ]]; then
-  echo "❌ Failed to create task. API response:" >&2
-  echo "$RESPONSE" | jq . 2>/dev/null || echo "$RESPONSE" >&2
-  exit 1
-fi
+  # Build content array as JSON
+  CONTENT='[]'
 
-echo "✅ Task created: $TASK_ID"
-echo "⏳ Polling for result (interval: ${POLL_INTERVAL}s, max: ${MAX_WAIT}s)..."
+  # Add text prompt
+  CONTENT=$(echo "$CONTENT" | jq --arg t "$PROMPT" '. + [{"type":"text","text":$t}]')
 
-# Poll for result
-ELAPSED=0
-CONSECUTIVE_ERRORS=0
-while [[ $ELAPSED -lt $MAX_WAIT ]]; do
-  sleep "$POLL_INTERVAL"
-  ELAPSED=$((ELAPSED + POLL_INTERVAL))
-
-  RESULT=$(curl_retry "$TASKS_URL/$TASK_ID" \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $API_KEY" 2>/dev/null || true)
-
-  # Handle empty/invalid response (network issue)
-  if [[ -z "$RESULT" ]]; then
-    CONSECUTIVE_ERRORS=$((CONSECUTIVE_ERRORS + 1))
-    if [[ $CONSECUTIVE_ERRORS -ge 5 ]]; then
-      echo "" >&2
-      echo "❌ Too many consecutive network errors. Task ID: $TASK_ID" >&2
-      echo "   Resume polling: curl '$TASKS_URL/$TASK_ID' -H 'Authorization: Bearer \$SEEDANCE_API_KEY'" >&2
-      exit 1
-    fi
-    printf "\r   [%ds] ⚠️  Network error (attempt %d/5), retrying..." "$ELAPSED" "$CONSECUTIVE_ERRORS"
-    continue
+  # Determine mode and add media
+  if [[ -n "$FIRST_IMAGE" && -n "$LAST_IMAGE" ]]; then
+    # First + Last frame mode (2.0 only, validated above)
+    CONTENT=$(echo "$CONTENT" | jq --arg u "$FIRST_IMAGE" \
+      '. + [{"type":"image_url","image_url":{"url":$u},"role":"first_frame"}]')
+    CONTENT=$(echo "$CONTENT" | jq --arg u "$LAST_IMAGE" \
+      '. + [{"type":"image_url","image_url":{"url":$u},"role":"last_frame"}]')
+  elif [[ -n "$FIRST_IMAGE" ]]; then
+    # First frame mode (2.0 only, validated above)
+    CONTENT=$(echo "$CONTENT" | jq --arg u "$FIRST_IMAGE" \
+      '. + [{"type":"image_url","image_url":{"url":$u},"role":"first_frame"}]')
+  else
+    # Multi-modal reference mode (2.0 only, validated above)
+    for img in "${REF_IMAGES[@]+"${REF_IMAGES[@]}"}"; do
+      CONTENT=$(echo "$CONTENT" | jq --arg u "$img" \
+        '. + [{"type":"image_url","image_url":{"url":$u},"role":"reference_image"}]')
+    done
+    for vid in "${REF_VIDEOS[@]+"${REF_VIDEOS[@]}"}"; do
+      CONTENT=$(echo "$CONTENT" | jq --arg u "$vid" \
+        '. + [{"type":"video_url","video_url":{"url":$u},"role":"reference_video"}]')
+    done
+    for aud in "${REF_AUDIOS[@]+"${REF_AUDIOS[@]}"}"; do
+      CONTENT=$(echo "$CONTENT" | jq --arg u "$aud" \
+        '. + [{"type":"audio_url","audio_url":{"url":$u},"role":"reference_audio"}]')
+    done
   fi
 
-  STATUS=$(echo "$RESULT" | jq -r '.status // "unknown"' 2>/dev/null || echo "parse_error")
-  CONSECUTIVE_ERRORS=0  # Reset on successful response
+  # Build request body
+  BODY=$(jq -n \
+    --arg model "$MODEL" \
+    --argjson content "$CONTENT" \
+    --arg resolution "$RESOLUTION" \
+    --arg ratio "$RATIO" \
+    --argjson duration "$DURATION" \
+    --argjson watermark "$WATERMARK" \
+    --argjson generate_audio "$GENERATE_AUDIO" \
+    '{model:$model, content:$content, resolution:$resolution, ratio:$ratio, duration:$duration, watermark:$watermark, generate_audio:$generate_audio}')
 
+  # Add web search tool if requested (2.0 only, validated above)
+  if [[ "$WEB_SEARCH" == "true" ]]; then
+    BODY=$(echo "$BODY" | jq '. + {tools:[{type:"web_search"}]}')
+  fi
+
+  echo "🎬 Creating video generation task..."
+  echo "   Model: $MODEL"
+  echo "   Base URL: $BASE_URL"
+  echo "   Resolution: $RESOLUTION | Ratio: $RATIO | Duration: ${DURATION}s"
+  echo "   Audio: $GENERATE_AUDIO"
+
+  # Submit once. A transport failure may occur after the server accepted the task.
+  create_rc=0
+  request -X POST "$TASKS_URL" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $API_KEY" \
+    -d "$BODY" || create_rc=$?
+  if [[ $create_rc -eq 1 ]]; then
+    echo "❌ Creation was rejected; correct the reported request error before submitting again." >&2
+    exit 1
+  elif [[ $create_rc -ne 0 ]]; then
+    api_diagnostic
+    echo "❌ Creation was not confirmed. Check the provider task list before submitting again." >&2
+    exit 1
+  fi
+  TASK_ID=$(printf '%s' "$RESULT" | jq -er '(.id // .task_id) | select(type == "string" and test("^[A-Za-z0-9_-]+$"))' 2>/dev/null || true)
+  if [[ -z "$TASK_ID" ]]; then
+    echo "❌ Creation response has no valid task ID. Check the provider task list before submitting again." >&2
+    exit 1
+  fi
+  echo "✅ Task created: $TASK_ID"
+fi
+
+echo "⏳ Querying task $TASK_ID (interval: ${POLL_INTERVAL}s, budget: ${MAX_WAIT}s)..."
+CONSECUTIVE_ERRORS=0
+while [[ $SECONDS -lt $MAX_WAIT ]]; do
+  rc=0
+  request "$TASKS_URL/$TASK_ID" -H "Authorization: Bearer $API_KEY" || rc=$?
+  if [[ $rc -eq 1 ]]; then
+    resume_hint
+    exit 1
+  fi
+  STATUS=""
+  if [[ $rc -eq 0 ]]; then
+    STATUS=$(printf '%s' "$RESULT" | jq -er '.status | select(type == "string")' 2>/dev/null || true)
+  fi
   case "$STATUS" in
     succeeded)
       VIDEO_URL=$(extract_video_url "$RESULT")
-      TOKENS=$(echo "$RESULT" | jq -r '.usage.total_tokens // "N/A"' 2>/dev/null || echo "N/A")
-      ACTUAL_DURATION=$(echo "$RESULT" | jq -r '.duration // "N/A"' 2>/dev/null || echo "N/A")
-
       if [[ -z "$VIDEO_URL" ]]; then
-        echo "" >&2
-        echo "❌ Task succeeded but could not extract video URL from response:" >&2
-        echo "$RESULT" | jq . 2>/dev/null || echo "$RESULT" >&2
+        echo "❌ Task succeeded but the result contains no video URL." >&2
+        resume_hint
         exit 1
       fi
-
-      echo ""
-      echo "🎉 Video generated!"
+      TOKENS=$(printf '%s' "$RESULT" | jq -r '.usage.total_tokens // "N/A"')
+      ACTUAL_DURATION=$(printf '%s' "$RESULT" | jq -r '.duration // "N/A"')
+      echo "🎉 Video generated: $VIDEO_URL"
       echo "   Duration: ${ACTUAL_DURATION}s | Tokens: $TOKENS"
-      echo "   URL: $VIDEO_URL"
-      echo "   ⚠️  URL expires in 24 hours — download promptly"
-
+      echo "   URL expires in 24 hours — download promptly"
       if [[ -n "$DOWNLOAD_DIR" ]]; then
+        remaining=$((MAX_WAIT - SECONDS))
+        if [[ $remaining -le 0 ]]; then
+          echo "❌ Download budget exhausted; resume the same task." >&2
+          resume_hint
+          exit 1
+        fi
         mkdir -p "$DOWNLOAD_DIR"
-        FILENAME="${TASK_ID}.mp4"
-        echo "📥 Downloading to ${DOWNLOAD_DIR}/${FILENAME}..."
-        if curl_retry -o "${DOWNLOAD_DIR}/${FILENAME}" "$VIDEO_URL"; then
-          echo "✅ Saved: ${DOWNLOAD_DIR}/${FILENAME}"
+        if curl -q --retry 0 --connect-timeout "$remaining" --max-time "$remaining" \
+          --fail -sS -o "${DOWNLOAD_DIR}/${TASK_ID}.mp4" "$VIDEO_URL"; then
+          echo "✅ Saved: ${DOWNLOAD_DIR}/${TASK_ID}.mp4"
         else
-          echo "⚠️  Download failed. Video URL (valid 24h): $VIDEO_URL" >&2
+          echo "❌ Download failed; resume the same task." >&2
+          resume_hint
+          exit 1
         fi
       fi
       exit 0
       ;;
-    failed)
-      ERROR=$(echo "$RESULT" | jq -r '
-        if .error then
-          if (.error | type) == "object" then
-            "\(.error.code // "unknown"): \(.error.message // "no details")"
-          else
-            .error | tostring
-          end
-        else "unknown error"
-        end
-      ' 2>/dev/null || echo "unknown error")
-      echo "" >&2
-      echo "❌ Task failed: $ERROR" >&2
+    failed|cancelled|canceled|expired)
+      echo "❌ Task $STATUS. Task ID: $TASK_ID" >&2
+      api_diagnostic
       exit 1
       ;;
-    parse_error)
-      printf "\r   [%ds] ⚠️  Could not parse response, retrying..." "$ELAPSED"
+    queued|running)
+      CONSECUTIVE_ERRORS=0
+      printf '[%ds] Status: %s\n' "$SECONDS" "$STATUS"
       ;;
     *)
-      printf "\r   [%ds] Status: %-10s" "$ELAPSED" "$STATUS"
+      CONSECUTIVE_ERRORS=$((CONSECUTIVE_ERRORS + 1))
+      if [[ $CONSECUTIVE_ERRORS -ge 5 ]]; then
+        echo "❌ Five consecutive transport, HTTP, or invalid-status errors." >&2
+        resume_hint
+        exit 1
+      fi
+      echo "⚠️ Query error ($CONSECUTIVE_ERRORS/5); retrying within the remaining budget." >&2
       ;;
   esac
+  remaining=$((MAX_WAIT - SECONDS))
+  [[ $remaining -gt 0 ]] || break
+  delay=$POLL_INTERVAL
+  [[ $remaining -lt $delay ]] && delay=$remaining
+  sleep "$delay"
 done
 
-echo "" >&2
-echo "⏰ Timeout after ${MAX_WAIT}s. Task may still be running." >&2
-echo "   Task ID: $TASK_ID" >&2
-echo "   Check: curl '$TASKS_URL/$TASK_ID' -H 'Authorization: Bearer \$SEEDANCE_API_KEY'" >&2
+echo "⏰ Call budget exhausted after ${MAX_WAIT}s. The task may still be running." >&2
+resume_hint
 exit 1

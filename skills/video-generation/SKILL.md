@@ -1,13 +1,6 @@
 ---
 name: video-generation
-description: |
-  Generate AI videos using Seedance 2.0 (ByteDance/Volcengine) via the Volcengine Ark API.
-  Two models: 2.0 (quality) and 2.0 Fast (speed+cost). Max resolution 720p.
-  Modes: text-to-video, image-to-video (first frame, first+last frame), multi-modal reference
-  (images+videos+audio), video editing, video extension, and web-search-enhanced generation.
-
-  Use when: user asks to generate a video, animate an image, create a video from text/images/audio,
-  edit a video with AI, extend a video, create talking-head content, or mentions Seedance/视频生成.
+description: Generate or edit videos with Seedance through the Volcengine Ark API, including animating images and extending clips. Use for requested video generation or explicit Seedance workflows.
 ---
 
 # Video Generation — Seedance 2.0
@@ -19,20 +12,20 @@ description: |
 
 ## Models
 
-| Model | ID | Best For |
-|-------|----|----------|
-| Seedance 2.0 | `doubao-seedance-2-0-260128` | Maximum quality |
+| Model             | ID                                | Best For               |
+| ----------------- | --------------------------------- | ---------------------- |
+| Seedance 2.0      | `doubao-seedance-2-0-260128`      | Maximum quality        |
 | Seedance 2.0 Fast | `doubao-seedance-2-0-fast-260128` | Speed + cost (default) |
 
 Both models: max 720p, max 15s, full multi-modal support.
 
 ## Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `SEEDANCE_API_KEY` | ✅ | — | API key for authentication |
-| `SEEDANCE_BASE_URL` | — | `https://ark.cn-beijing.volces.com` | Base URL (override for proxies) |
-| `SEEDANCE_MODEL` | — | `doubao-seedance-2-0-fast-260128` | Default model ID |
+| Variable            | Required | Default                             | Description                     |
+| ------------------- | -------- | ----------------------------------- | ------------------------------- |
+| `SEEDANCE_API_KEY`  | ✅       | —                                   | API key for authentication      |
+| `SEEDANCE_BASE_URL` | —        | `https://ark.cn-beijing.volces.com` | Base URL (override for proxies) |
+| `SEEDANCE_MODEL`    | —        | `doubao-seedance-2-0-fast-260128`   | Default model ID                |
 
 ## Quick Start
 
@@ -60,7 +53,10 @@ curl ${SEEDANCE_BASE_URL:-https://ark.cn-beijing.volces.com}/api/v3/contents/gen
   -H "Authorization: Bearer $SEEDANCE_API_KEY"
 ```
 
-Task is async. Poll until `status == "succeeded"`, then download video URL (valid 24h).
+Tasks are asynchronous. Poll within a real elapsed-time budget and inspect HTTP
+errors and task status. Stop on success or a terminal failure; retry only transient
+query errors within the budget. On timeout retain the task ID and query that same
+task, rather than submitting again. A successful video URL is valid for 24 hours.
 
 ### Response Format
 
@@ -84,28 +80,28 @@ Task is async. Poll until `status == "succeeded"`, then download video URL (vali
 
 ## Generation Modes
 
-| Mode | Content Array | Notes |
-|------|--------------|-------|
-| Text→Video | `[{type:"text", text:"..."}]` | Prompt only |
-| First Frame | `[{type:"text",...}, {type:"image_url", image_url:{url:"..."}, role:"first_frame"}]` | |
-| First+Last Frame | Two `image_url` with roles `first_frame` + `last_frame` | |
-| Multi-modal Reference | Images (`reference_image`) + Videos (`reference_video`) + Audio (`reference_audio`) | Up to 9 images, 3 videos (≤15s total), 3 audio clips |
-| Edit Video | Text + reference_image + reference_video | "Replace X in the video with Y from the image" |
-| Extend Video | Text + multiple reference_videos | Stitch/extend narrative across clips |
+| Mode                  | Content Array                                                                        | Notes                                                |
+| --------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| Text→Video            | `[{type:"text", text:"..."}]`                                                        | Prompt only                                          |
+| First Frame           | `[{type:"text",...}, {type:"image_url", image_url:{url:"..."}, role:"first_frame"}]` |                                                      |
+| First+Last Frame      | Two `image_url` with roles `first_frame` + `last_frame`                              |                                                      |
+| Multi-modal Reference | Images (`reference_image`) + Videos (`reference_video`) + Audio (`reference_audio`)  | Up to 9 images, 3 videos (≤15s total), 3 audio clips |
+| Edit Video            | Text + reference_image + reference_video                                             | "Replace X in the video with Y from the image"       |
+| Extend Video          | Text + multiple reference_videos                                                     | Stitch/extend narrative across clips                 |
 
 **⚠️ Modes are mutually exclusive:** first_frame/last_frame vs reference_image/reference_video cannot be mixed.
 
 ## Key Parameters
 
-| Parameter | Values | Default | Notes |
-|-----------|--------|---------|-------|
-| `model` | `doubao-seedance-2-0-260128`, `doubao-seedance-2-0-fast-260128` | fast | Required |
-| `resolution` | `480p`, `720p` | `720p` | Max 720p |
-| `ratio` | `21:9`, `16:9`, `4:3`, `1:1`, `3:4`, `9:16`, `adaptive` | API: `adaptive`; script: `16:9` | |
-| `duration` | 4–15 (int), or -1 (auto) | 5 | Seconds |
-| `generate_audio` | true/false | true | Sync audio/speech/music generation |
-| `watermark` | true/false | — | — |
-| `tools` | `[{"type":"web_search"}]` | — | Text-to-video only |
+| Parameter        | Values                                                          | Default                         | Notes                              |
+| ---------------- | --------------------------------------------------------------- | ------------------------------- | ---------------------------------- |
+| `model`          | `doubao-seedance-2-0-260128`, `doubao-seedance-2-0-fast-260128` | fast                            | Required                           |
+| `resolution`     | `480p`, `720p`                                                  | `720p`                          | Max 720p                           |
+| `ratio`          | `21:9`, `16:9`, `4:3`, `1:1`, `3:4`, `9:16`, `adaptive`         | API: `adaptive`; script: `16:9` |                                    |
+| `duration`       | 4–15 (int), or -1 (auto)                                        | 5                               | Seconds                            |
+| `generate_audio` | true/false                                                      | true                            | Sync audio/speech/music generation |
+| `watermark`      | true/false                                                      | —                               | —                                  |
+| `tools`          | `[{"type":"web_search"}]`                                       | —                               | Text-to-video only                 |
 
 ## Script
 
@@ -123,11 +119,22 @@ scripts/seedance.sh "prompt" --model doubao-seedance-2-0-260128 --ratio 9:16 --d
 
 # Download to directory
 scripts/seedance.sh "prompt" --download /tmp/videos
+
+# Resume an existing task without another generation request
+scripts/seedance.sh --task-id cgt-example --max-wait 600
 ```
 
 Respects `SEEDANCE_API_KEY`, `SEEDANCE_BASE_URL`, and `SEEDANCE_MODEL` environment variables.
+Use a credential-free HTTP(S) base URL without userinfo, query parameters, or
+fragments. Pass authentication separately through the API-key input; endpoints
+appear in progress and recovery output.
 
-Features: model validation (rejects non-2.0 models), automatic retry on network errors, human-readable error messages, timeout handling with resume instructions.
+The script validates generation models, bounds HTTP calls and waits by elapsed
+time, and retries transient queries or invalid responses up to five consecutive
+errors. It submits a creation POST only once: after an ambiguous creation failure,
+check the provider task list before trying again. Resume with `--task-id` to query
+or download an existing result. Permanent HTTP errors and terminal task failures
+return immediately with the task ID when known.
 
 ## Prompt Tips
 

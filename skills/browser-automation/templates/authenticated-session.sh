@@ -5,32 +5,41 @@
 
 set -euo pipefail
 
+: "${LOGIN_READY_SELECTOR:?Set LOGIN_READY_SELECTOR to the settled login form CSS selector}"
+: "${AUTH_READY_SELECTOR:?Set AUTH_READY_SELECTOR to authenticated landing content CSS selector}"
+
 LOGIN_URL="${1:?Usage: $0 <login-url> [state-file]}"
 STATE_FILE="${2:-./auth-state.json}"
+# A reused session may reach either the login form or authenticated content.
 
 echo "Authentication workflow: $LOGIN_URL"
 echo "Prefer the agent-browser auth vault when possible."
 
+SESSION_OPEN=false
+trap 'agent-browser close >/dev/null 2>&1 || true' EXIT
 if [[ -f "$STATE_FILE" ]]; then
   echo "Loading saved state from $STATE_FILE..."
   if agent-browser --state "$STATE_FILE" open "$LOGIN_URL" 2>/dev/null; then
-    agent-browser wait --load networkidle
-    CURRENT_URL="$(agent-browser get url)"
-    if [[ "$CURRENT_URL" != *"login"* ]] && [[ "$CURRENT_URL" != *"signin"* ]]; then
+    SESSION_OPEN=true
+    # A transient login form or URL is not evidence that asynchronous restore failed.
+    # Use the browser's bounded element wait for positive authentication evidence.
+    if agent-browser wait "$AUTH_READY_SELECTOR"; then
       echo "Session restored successfully"
       agent-browser snapshot -i
-      agent-browser close
       exit 0
     fi
-    echo "Session expired, performing fresh login..."
+    echo "Authentication not confirmed; preserving saved state for inspection."
+  else
+    echo "Could not load saved state; preserving the file for inspection."
     agent-browser close 2>/dev/null || true
   fi
-  rm -f "$STATE_FILE"
 fi
 
-echo "Opening login page for discovery..."
-agent-browser open "$LOGIN_URL"
-agent-browser wait --load networkidle
+if [[ "$SESSION_OPEN" != true ]]; then
+  echo "Opening login page for discovery..."
+  agent-browser open "$LOGIN_URL"
+fi
+agent-browser wait "$LOGIN_READY_SELECTOR"
 
 echo
 echo "Login form structure:"
@@ -44,21 +53,18 @@ echo "  2. Use the auth vault if the environment allows it."
 echo "  3. If you need saved state, customize the example login flow below."
 echo "  4. Re-run the customized commands to save $STATE_FILE."
 
-agent-browser close
 exit 0
 
 # Example login flow to customize for the target site:
 # : "${APP_USERNAME:?Set APP_USERNAME}"
 # : "${APP_PASSWORD:?Set APP_PASSWORD}"
 # agent-browser open "$LOGIN_URL"
-# agent-browser wait --load networkidle
+# agent-browser wait "$LOGIN_READY_SELECTOR"
 # agent-browser snapshot -i
 # agent-browser fill @e1 "$APP_USERNAME"
 # agent-browser fill @e2 "$APP_PASSWORD"
 # agent-browser click @e3
-# agent-browser wait --load networkidle
-# FINAL_URL="$(agent-browser get url)"
-# if [[ "$FINAL_URL" == *"login"* ]] || [[ "$FINAL_URL" == *"signin"* ]]; then
+# if ! agent-browser wait "$AUTH_READY_SELECTOR"; then
 #   echo "Login failed"
 #   agent-browser screenshot /tmp/login-failed.png
 #   agent-browser close

@@ -5,12 +5,14 @@
 
 set -euo pipefail
 
+: "${READY_SELECTOR:?Set READY_SELECTOR to the page element that confirms this task is ready}"
+
 FORM_URL="${1:?Usage: $0 <form-url>}"
 
 echo "Form automation: $FORM_URL"
 
 agent-browser open "$FORM_URL"
-agent-browser wait --load networkidle
+agent-browser wait "$READY_SELECTOR"
 
 echo
 echo "Form structure:"
@@ -26,7 +28,7 @@ agent-browser snapshot -i
 # agent-browser click @e6
 
 # Wait for submission or redirect when needed.
-# agent-browser wait --load networkidle
+# agent-browser wait "#expected-result"  # customize for this page
 # agent-browser wait --url "**/success"
 
 echo

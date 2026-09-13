@@ -1,6 +1,6 @@
 ---
 name: browser-automation
-description: Unified browser automation for AI agents. Use when Codex or Claude needs to open websites, click buttons, fill forms, log in, take screenshots, scrape data, download files, verify UI behavior, test web apps, or automate browser actions. Default to `agent-browser` for general browsing, session reuse, authentication, screenshots, extraction, responsive checks, and parallel agent workflows. Use the `playwright-cli` path only when the task explicitly needs request mocking, tracing, console or network inspection, fine-grained mouse events, dialog handling, explicit Firefox/WebKit/Edge coverage, or custom Playwright code.
+description: Operate a real browser for interaction, authenticated or dynamic content, screenshots, and UI verification, or when the user explicitly requests browser use. Static page reading or downloading alone does not require this skill.
 allowed-tools: Bash(npx agent-browser:*), Bash(agent-browser:*), Bash(playwright-cli:*), Bash(npx playwright-cli:*)
 ---
 
@@ -26,10 +26,10 @@ Example:
 
 ```bash
 agent-browser open https://example.com
-agent-browser wait --load networkidle
+agent-browser wait "#target-element"  # replace with the relevant page selector
 agent-browser snapshot -i
 agent-browser click @e1
-agent-browser wait --load networkidle
+agent-browser wait "#target-element"  # replace with the relevant page selector
 agent-browser snapshot -i
 agent-browser close
 ```
@@ -72,7 +72,7 @@ Prefer this path for most tasks because it is better suited to agent workflows.
 
 ```bash
 agent-browser open <url>
-agent-browser wait --load networkidle
+agent-browser wait "#target-element"  # replace with the relevant page selector
 agent-browser snapshot -i
 agent-browser click @e1
 agent-browser fill @e2 "text"
@@ -88,7 +88,9 @@ Good defaults:
 
 - Use `snapshot -i` before interacting.
 - Re-snapshot after navigation, form submission, modal open, or dynamic content changes.
-- Use `wait --load networkidle` for slow pages.
+- Wait for the target element, expected URL, or business result with a bounded
+  timeout. Use `networkidle` only when network quiescence is itself required;
+  background traffic need not prevent an otherwise ready page from being used.
 - Use named sessions for parallel or long-running workflows.
 - Use saved auth state when available.
 
@@ -129,8 +131,16 @@ playwright-cli close
 - Reference: `references/tool-selection.md`
 - Reference: `references/session-auth.md`
 
-These templates are starter workflows. Customize refs, selectors, or follow-up commands when the
-site-specific flow requires it.
+These templates are starter workflows. Set `READY_SELECTOR` to a task-relevant
+element before running a capture or form template. Choose it from
+the page or an initial discovery snapshot; do not ask the user to choose a selector.
+For authentication, set `LOGIN_READY_SELECTOR` and `AUTH_READY_SELECTOR` to
+CSS selectors for the settled login form and authenticated landing content.
+The saved-state path first waits for positive authenticated-content evidence.
+If that bounded wait fails, it preserves the state file and inspects the login
+form; a transient form or URL never invalidates saved state. Fresh login discovery
+waits only for the login form. A generic body element does not establish that asynchronous content is
+ready. Customize refs and follow-up commands for the site.
 
 ## References
 

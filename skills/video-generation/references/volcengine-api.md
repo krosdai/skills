@@ -13,15 +13,16 @@ Auth: `Authorization: Bearer $SEEDANCE_API_KEY`
 
 ## Models
 
-| Model | ID | Best For |
-|-------|----|----------|
-| Seedance 2.0 | `doubao-seedance-2-0-260128` | Maximum quality |
-| Seedance 2.0 fast | `doubao-seedance-2-0-fast-260128` | Speed + cost |
-| Seedance 1.5 pro | `doubao-seedance-1-5-pro-251215` | 1080p, sample mode |
+| Model             | ID                                | Best For           |
+| ----------------- | --------------------------------- | ------------------ |
+| Seedance 2.0      | `doubao-seedance-2-0-260128`      | Maximum quality    |
+| Seedance 2.0 fast | `doubao-seedance-2-0-fast-260128` | Speed + cost       |
+| Seedance 1.5 pro  | `doubao-seedance-1-5-pro-251215`  | 1080p, sample mode |
 
 ### Feature Matrix (2.0 vs older)
 
 Only Seedance 2.0 / 2.0 fast support:
+
 - Multi-modal reference (images + videos + audio)
 - Video editing (replace elements)
 - Video extension (stitch clips)
@@ -43,7 +44,7 @@ Older models (1.5, 1.0) support 1080p but lack multi-modal features.
 ### Text
 
 ```json
-{"type": "text", "text": "prompt string"}
+{ "type": "text", "text": "prompt string" }
 ```
 
 - Chinese: ≤500 chars. English: ≤1000 words.
@@ -54,12 +55,13 @@ Older models (1.5, 1.0) support 1080p but lack multi-modal features.
 ```json
 {
   "type": "image_url",
-  "image_url": {"url": "<public URL | data:image/png;base64,... | asset://ASSET_ID>"},
+  "image_url": { "url": "<public URL | data:image/png;base64,... | asset://ASSET_ID>" },
   "role": "first_frame | last_frame | reference_image"
 }
 ```
 
 **Constraints:**
+
 - Formats: jpeg, png, webp, bmp, tiff, gif
 - Aspect ratio (W/H): 0.4–2.5
 - Dimensions: 300–6000px per side
@@ -71,12 +73,13 @@ Older models (1.5, 1.0) support 1080p but lack multi-modal features.
 ```json
 {
   "type": "video_url",
-  "video_url": {"url": "<public URL | asset://ASSET_ID>"},
+  "video_url": { "url": "<public URL | asset://ASSET_ID>" },
   "role": "reference_video"
 }
 ```
 
 **Constraints:**
+
 - Formats: mp4, mov
 - Resolution: 480p or 720p
 - Duration: 2–15s per clip; total ≤15s across up to 3 clips
@@ -91,12 +94,13 @@ Older models (1.5, 1.0) support 1080p but lack multi-modal features.
 ```json
 {
   "type": "audio_url",
-  "audio_url": {"url": "<public URL | data:audio/wav;base64,... | asset://ASSET_ID>"},
+  "audio_url": { "url": "<public URL | data:audio/wav;base64,... | asset://ASSET_ID>" },
   "role": "reference_audio"
 }
 ```
 
 **Constraints:**
+
 - Formats: wav, mp3
 - Duration: 2–15s per clip; total ≤15s across up to 3 clips
 - Size: <15MB per audio; request body <64MB
@@ -107,6 +111,7 @@ Older models (1.5, 1.0) support 1080p but lack multi-modal features.
 ## Mutually Exclusive Modes
 
 These three modes **cannot be mixed** in a single request:
+
 1. **First frame** (`role: first_frame`)
 2. **First + last frame** (`role: first_frame` + `role: last_frame`)
 3. **Multi-modal reference** (`role: reference_image` / `reference_video` / `reference_audio`)
@@ -115,47 +120,47 @@ Workaround: In multi-modal mode, use the prompt to instruct the model to use a r
 
 ## Parameters
 
-| Param | Type | Values | Default | Notes |
-|-------|------|--------|---------|-------|
-| `model` | string | See models table | — | Required |
-| `content` | object[] | See content types | — | Required |
-| `resolution` | string | `480p`, `720p`, `1080p` | `720p` | 2.0 max 720p; 1.5 Pro supports 1080p |
-| `ratio` | string | `21:9`, `16:9`, `4:3`, `1:1`, `3:4`, `9:16`, `adaptive` | `adaptive` | |
-| `duration` | int | 4–15, or -1 (auto) | 5 | -1 = model decides |
-| `generate_audio` | bool | | true (2.0) | Sync audio with visuals |
-| `watermark` | bool | | — | |
-| `tools` | object[] | `[{"type":"web_search"}]` | — | 2.0 only, text-to-video only |
+| Param            | Type     | Values                                                  | Default    | Notes                                |
+| ---------------- | -------- | ------------------------------------------------------- | ---------- | ------------------------------------ |
+| `model`          | string   | See models table                                        | —          | Required                             |
+| `content`        | object[] | See content types                                       | —          | Required                             |
+| `resolution`     | string   | `480p`, `720p`, `1080p`                                 | `720p`     | 2.0 max 720p; 1.5 Pro supports 1080p |
+| `ratio`          | string   | `21:9`, `16:9`, `4:3`, `1:1`, `3:4`, `9:16`, `adaptive` | `adaptive` |                                      |
+| `duration`       | int      | 4–15, or -1 (auto)                                      | 5          | -1 = model decides                   |
+| `generate_audio` | bool     |                                                         | true (2.0) | Sync audio with visuals              |
+| `watermark`      | bool     |                                                         | —          |                                      |
+| `tools`          | object[] | `[{"type":"web_search"}]`                               | —          | 2.0 only, text-to-video only         |
 
 ## Resolution × Ratio Pixel Table
 
 ### 480p
 
-| Ratio | Pixels |
-|-------|--------|
-| 16:9 | 864×496 |
-| 4:3 | 752×560 |
-| 1:1 | 640×640 |
-| 3:4 | 560×752 |
-| 9:16 | 496×864 |
-| 21:9 | 992×432 |
+| Ratio | Pixels  |
+| ----- | ------- |
+| 16:9  | 864×496 |
+| 4:3   | 752×560 |
+| 1:1   | 640×640 |
+| 3:4   | 560×752 |
+| 9:16  | 496×864 |
+| 21:9  | 992×432 |
 
 ### 720p
 
-| Ratio | Pixels |
-|-------|--------|
-| 16:9 | 1280×720 |
-| 4:3 | 1112×834 |
-| 1:1 | 960×960 |
-| 3:4 | 834×1112 |
-| 9:16 | 720×1280 |
-| 21:9 | 1470×630 |
+| Ratio | Pixels   |
+| ----- | -------- |
+| 16:9  | 1280×720 |
+| 4:3   | 1112×834 |
+| 1:1   | 960×960  |
+| 3:4   | 834×1112 |
+| 9:16  | 720×1280 |
+| 21:9  | 1470×630 |
 
 ## Rate Limits
 
-| | 2.0 / 2.0 fast | 1.5 pro | 1.0 pro | 1.0 lite |
-|---|---|---|---|---|
-| RPM | 600 | 600 | 600 | 300 |
-| Concurrency | 10 | 10 | 10 | 5 |
+|             | 2.0 / 2.0 fast | 1.5 pro | 1.0 pro | 1.0 lite |
+| ----------- | -------------- | ------- | ------- | -------- |
+| RPM         | 600            | 600     | 600     | 300      |
+| Concurrency | 10             | 10      | 10      | 5        |
 
 ## Response Fields
 
