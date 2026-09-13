@@ -50,6 +50,7 @@ GENERATE_AUDIO=true
 WATERMARK=false
 WEB_SEARCH=false
 API_KEY="${SEEDANCE_API_KEY:-}"
+API_KEY_FROM_FLAG=false
 POLL_INTERVAL=10
 MAX_WAIT=600
 DOWNLOAD_DIR=""
@@ -85,7 +86,7 @@ while [[ $# -gt 0 ]]; do
     --audio)         require_arg "$1" "${2:-}"; GENERATE_AUDIO="$2"; shift 2 ;;
     --watermark)     WATERMARK=true; shift ;;
     --web-search)    WEB_SEARCH=true; shift ;;
-    --api-key)       require_arg "$1" "${2:-}"; API_KEY="$2"; shift 2 ;;
+    --api-key)       require_arg "$1" "${2:-}"; API_KEY="$2"; API_KEY_FROM_FLAG=true; shift 2 ;;
     --base-url)      require_arg "$1" "${2:-}"; BASE_URL="$2"; shift 2 ;;
     --poll-interval) require_arg "$1" "${2:-}"; POLL_INTERVAL="$2"; shift 2 ;;
     --max-wait)      require_arg "$1" "${2:-}"; MAX_WAIT="$2"; shift 2 ;;
@@ -181,11 +182,27 @@ extract_video_url() {
   ' 2>/dev/null || echo ""
 }
 
+# Report only the provider's diagnostic fields, never the full response body.
+api_diagnostic() {
+  local message
+  message=$(printf '%s' "$RESULT" | jq -r '
+    .error as $error |
+    if ($error | type) == "object" then
+      [$error.code, $error.message] | map(select(type == "string")) | join(": ")
+    elif ($error | type) == "string" then $error
+    else "" end | gsub("[[:cntrl:]]"; " ")
+  ' 2>/dev/null || true)
+  message=${message//"$API_KEY"/[REDACTED]}
+  [[ -z "$message" ]] || printf '   Provider: %.1000s\n' "$message" >&2
+}
+
 # One bounded HTTP attempt. GET retries belong to the polling loop;
 # a creation POST is never replayed automatically after an ambiguous failure.
 RESPONSE_FILE=$(mktemp "${TMPDIR:-/tmp}/seedance.XXXXXX")
 trap 'rm -f "$RESPONSE_FILE"' EXIT
 SECONDS=0
+RESULT=""
+HTTP_STATUS=""
 request() {
   local remaining=$((MAX_WAIT - SECONDS))
   [[ $remaining -gt 0 ]] || return 2
@@ -200,7 +217,7 @@ request() {
   case "$HTTP_STATUS" in
     2??) return 0 ;;
     408|429|5??) return 2 ;;
-    *) echo "❌ HTTP $HTTP_STATUS; request cannot continue." >&2; return 1 ;;
+    *) echo "❌ HTTP $HTTP_STATUS; request rejected." >&2; api_diagnostic; return 1 ;;
   esac
 }
 
@@ -212,7 +229,12 @@ resume_hint() {
   if [[ -n "$DOWNLOAD_DIR" ]]; then
     printf ' %q' --download "$DOWNLOAD_DIR" >&2
   fi
-  printf '\n   Keep the same credentials in SEEDANCE_API_KEY; the command omits secrets.\n' >&2
+  printf '\n' >&2
+  if [[ "$API_KEY_FROM_FLAG" == true ]]; then
+    echo "   Credentials came from --api-key. Securely set SEEDANCE_API_KEY to the same value before resuming; the command omits secrets." >&2
+  else
+    echo "   Keep the same credentials in SEEDANCE_API_KEY; the command omits secrets." >&2
+  fi
 }
 
 if [[ -z "$TASK_ID" ]]; then
@@ -272,10 +294,16 @@ if [[ -z "$TASK_ID" ]]; then
   echo "   Audio: $GENERATE_AUDIO"
 
   # Submit once. A transport failure may occur after the server accepted the task.
-  if ! request -X POST "$TASKS_URL" \
+  create_rc=0
+  request -X POST "$TASKS_URL" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $API_KEY" \
-    -d "$BODY"; then
+    -d "$BODY" || create_rc=$?
+  if [[ $create_rc -eq 1 ]]; then
+    echo "❌ Creation was rejected; correct the reported request error before submitting again." >&2
+    exit 1
+  elif [[ $create_rc -ne 0 ]]; then
+    api_diagnostic
     echo "❌ Creation was not confirmed. Check the provider task list before submitting again." >&2
     exit 1
   fi

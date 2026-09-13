@@ -217,7 +217,7 @@ if sys.argv[1:] == ['wait', '#auth-ready']:
 
 
 class VideoTests(unittest.TestCase):
-    def run_video(self, responses, resume=False, budget=8, interval=1, download=None, follow_hint=False):
+    def run_video(self, responses, resume=False, budget=8, interval=1, download=None, follow_hint=False, api_key_flag=False):
         requests = []
         replies = list(responses)
 
@@ -249,6 +249,8 @@ class VideoTests(unittest.TestCase):
             args = ["bash", str(VIDEO), "--task-id", "cgt-test"] if resume else ["bash", str(VIDEO), "fixture prompt"]
             args += ["--max-wait", str(budget), "--poll-interval", str(interval)]
             env = dict(os.environ, SEEDANCE_API_KEY="offline-test-only", SEEDANCE_BASE_URL=f"http://127.0.0.1:{server.server_port}", SEEDANCE_MODEL="doubao-seedance-2-0-fast-260128")
+            if api_key_flag:
+                args += ["--api-key", env.pop("SEEDANCE_API_KEY")]
             if download is not None:
                 args += ["--download", str(download)]
             if follow_hint:
@@ -263,6 +265,10 @@ class VideoTests(unittest.TestCase):
                 self.assertEqual(command[command.index("--base-url") + 1], f"http://127.0.0.1:{server.server_port}")
                 self.assertEqual(command[command.index("--poll-interval") + 1], str(interval))
                 self.assertNotIn("offline-test-only", hint)
+                if api_key_flag:
+                    self.assertIn("Credentials came from --api-key", result.stderr)
+                    self.assertIn("set SEEDANCE_API_KEY", result.stderr)
+                    env["SEEDANCE_API_KEY"] = "offline-test-only"
                 result = subprocess.run(["bash", *command], env=env, capture_output=True, text=True, timeout=budget + 3)
             elapsed = time.monotonic() - started
             return result, requests, elapsed
@@ -280,6 +286,14 @@ class VideoTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(requests, ["POST"])
 
+    def test_creation_rejection_reports_redacted_diagnostic(self):
+        result, requests, _ = self.run_video([(400, '{"error":{"code":"InvalidParameter","message":"unsupported value; key offline-test-only"}}', 0)])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(requests, ["POST"])
+        self.assertIn("InvalidParameter: unsupported value", result.stderr)
+        self.assertNotIn("offline-test-only", result.stderr)
+        self.assertNotIn("task list", result.stderr)
+
     def test_resume_only_queries(self):
         result, requests, _ = self.run_video([(200, '{"status":"succeeded","content":{"video_url":"https://example.com/video.mp4"}}', 0)], resume=True)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -292,7 +306,7 @@ class VideoTests(unittest.TestCase):
                 (401, '{}', 0),
                 (200, '{"status":"succeeded","content":{"video_url":"__VIDEO_URL__"}}', 0),
                 (200, 'video fixture', 0),
-            ], resume=True, download=download, follow_hint=True)
+            ], resume=True, download=download, follow_hint=True, api_key_flag=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(requests, ["GET", "GET", "GET"])
             self.assertEqual((download / "cgt-test.mp4").read_text(), "video fixture")
