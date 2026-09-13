@@ -46,7 +46,7 @@ When adding a new self-authored skill, create it under `skills/<name>/` and syml
 
 ## Cursor Cloud specific instructions
 
-- This repo requires Node `>=24` (`package.json` `engines`); Cursor's default image ships Node 22. The committed `.cursor/` environment (Node 24 image + Corepack pnpm + `git-lfs` + `mise`) provides the correct toolchain. For local setup, follow the `mise install` + `pnpm install --frozen-lockfile` flow in `README.md`.
+- This repo requires Node `>=24` (`package.json` `engines`); Cursor's default image ships Node 22. The committed `.cursor/` environment (Node 24 image + Corepack pnpm + `git-lfs` + `mise`) provides the correct toolchain and installs Python, jq, and procps for the offline regression suite. For local setup, follow the `mise install` + `pnpm install --frozen-lockfile` flow in `README.md`.
 - `pnpm lint` checks formatting and JavaScript/TypeScript lint rules. When changing
   PR/video helpers or browser readiness templates, also run
   `python -m unittest discover -s tests -v`. The tests use disposable fixtures and

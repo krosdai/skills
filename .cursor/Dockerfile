@@ -11,12 +11,18 @@ FROM node:24-bookworm-slim
 # curl/ca-certificates for downloading mise, and sudo so the agent can install
 # extra packages at runtime (Cursor Cloud Agents commonly rely on passwordless
 # sudo, which the default image provides).
+# Python and jq run the offline helper tests; procps supplies the watchdog's
+# pkill fallback, and python-is-python3 provides the documented python command.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         git \
         git-lfs \
+        jq \
+        procps \
+        python3 \
+        python-is-python3 \
         sudo \
     && git lfs install --system \
     && rm -rf /var/lib/apt/lists/*
