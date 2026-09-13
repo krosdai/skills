@@ -171,6 +171,7 @@ class VideoTests(unittest.TestCase):
                     self.end_headers()
                     self.wfile.write(body.replace("__VIDEO_URL__", f"http://127.0.0.1:{self.server.server_port}/video").encode())
                 except (BrokenPipeError, ConnectionResetError):
+                    # Budget tests deliberately disconnect before the delayed response.
                     pass
 
             do_GET = respond
