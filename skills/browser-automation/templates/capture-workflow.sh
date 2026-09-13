@@ -5,6 +5,8 @@
 
 set -euo pipefail
 
+: "${READY_SELECTOR:?Set READY_SELECTOR to the page element that confirms this task is ready}"
+
 TARGET_URL="${1:?Usage: $0 <url> [output-dir]}"
 OUTPUT_DIR="${2:-.}"
 
@@ -12,8 +14,7 @@ echo "Capturing: $TARGET_URL"
 mkdir -p "$OUTPUT_DIR"
 
 agent-browser open "$TARGET_URL"
-# Set READY_SELECTOR to the element whose availability matters to this task.
-[[ -z "${READY_SELECTOR:-}" ]] || agent-browser wait "$READY_SELECTOR"
+agent-browser wait "$READY_SELECTOR"
 
 TITLE="$(agent-browser get title)"
 URL="$(agent-browser get url)"

@@ -151,6 +151,71 @@ sys.exit(10)
         self.assertLess(elapsed, 1)
 
 
+class BrowserTemplateTests(unittest.TestCase):
+    def test_templates_require_and_wait_for_ready_state(self):
+        templates = ROOT / "skills/browser-automation/templates"
+        for name in ["capture-workflow.sh", "form-automation.sh", "authenticated-session.sh"]:
+            for ready, fail_wait in [(False, False), (True, False), (True, True)]:
+                with self.subTest(template=name, ready=ready, fail_wait=fail_wait), tempfile.TemporaryDirectory() as temp:
+                    folder = Path(temp)
+                    log = folder / "calls"
+                    executable(folder / "agent-browser", f"#!{sys.executable}\n" + """import json, os, sys
+from pathlib import Path
+with Path(os.environ['BROWSER_LOG']).open('a') as output:
+    output.write(json.dumps(sys.argv[1:]) + '\\n')
+if sys.argv[1] == 'wait' and os.environ['BROWSER_WAIT_FAIL'] == '1':
+    sys.exit(1)
+if sys.argv[1:3] == ['get', 'url']:
+    print('https://example.com/account')
+""")
+                    executable(folder / "eza", "#!/bin/sh\nexit 0\n")
+                    env = dict(os.environ, PATH=f"{folder}:{os.environ['PATH']}", BROWSER_LOG=str(log), BROWSER_WAIT_FAIL=str(int(fail_wait)))
+                    for key in ["READY_SELECTOR", "LOGIN_READY_SELECTOR", "AUTH_READY_SELECTOR"]:
+                        env.pop(key, None)
+                    if ready:
+                        env["READY_SELECTOR"] = "#task-ready"
+                        env["LOGIN_READY_SELECTOR"] = "#login-ready"
+                        env["AUTH_READY_SELECTOR"] = "#auth-ready"
+                    # Exercise authenticated state reuse without accessing real credentials.
+                    (folder / "auth-state.json").write_text('{}')
+                    result = subprocess.run(["bash", str(templates / name), "https://example.com"], cwd=folder, env=env, capture_output=True, text=True, timeout=5)
+                    calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+                    if not ready:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertEqual(calls, [])
+                    else:
+                        selector = "#login-ready, #auth-ready" if name == "authenticated-session.sh" else "#task-ready"
+                        wait_index = calls.index(["wait", selector])
+                        self.assertFalse(any(call[0] in ["get", "snapshot", "screenshot", "pdf"] for call in calls[:wait_index]))
+                        if fail_wait:
+                            self.assertNotEqual(result.returncode, 0)
+                            self.assertFalse(any(call[0] in ["get", "snapshot", "screenshot", "pdf"] for call in calls[wait_index + 1:]))
+                        else:
+                            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_expired_session_reaches_login_discovery(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            executable(folder / "agent-browser", f"#!{sys.executable}\n" + """import json, os, sys
+from pathlib import Path
+with Path(os.environ['BROWSER_LOG']).open('a') as output:
+    output.write(json.dumps(sys.argv[1:]) + '\\n')
+if sys.argv[1:3] == ['get', 'url']:
+    print('https://example.com/login')
+if sys.argv[1:] == ['wait', '#auth-ready']:
+    sys.exit(1)
+""")
+            (folder / "auth-state.json").write_text('{}')
+            log = folder / "calls"
+            env = dict(os.environ, PATH=f"{folder}:{os.environ['PATH']}", BROWSER_LOG=str(log), LOGIN_READY_SELECTOR="#login-ready", AUTH_READY_SELECTOR="#auth-ready")
+            result = subprocess.run(["bash", str(ROOT / "skills/browser-automation/templates/authenticated-session.sh"), "https://example.com/login"], cwd=folder, env=env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = [json.loads(line) for line in log.read_text().splitlines()]
+            self.assertIn(["wait", "#login-ready, #auth-ready"], calls)
+            self.assertIn(["wait", "#login-ready"], calls)
+            self.assertIn("Login form structure:", result.stdout)
+
+
 class VideoTests(unittest.TestCase):
     def run_video(self, responses, resume=False, budget=8, interval=1, download=None, follow_hint=False):
         requests = []

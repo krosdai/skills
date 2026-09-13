@@ -5,8 +5,12 @@
 
 set -euo pipefail
 
+: "${LOGIN_READY_SELECTOR:?Set LOGIN_READY_SELECTOR to the settled login form CSS selector}"
+: "${AUTH_READY_SELECTOR:?Set AUTH_READY_SELECTOR to authenticated landing content CSS selector}"
+
 LOGIN_URL="${1:?Usage: $0 <login-url> [state-file]}"
 STATE_FILE="${2:-./auth-state.json}"
+# A reused session may reach either the login form or authenticated content.
 
 echo "Authentication workflow: $LOGIN_URL"
 echo "Prefer the agent-browser auth vault when possible."
@@ -14,7 +18,7 @@ echo "Prefer the agent-browser auth vault when possible."
 if [[ -f "$STATE_FILE" ]]; then
   echo "Loading saved state from $STATE_FILE..."
   if agent-browser --state "$STATE_FILE" open "$LOGIN_URL" 2>/dev/null; then
-    [[ -z "${READY_SELECTOR:-}" ]] || agent-browser wait "$READY_SELECTOR"
+    agent-browser wait "$LOGIN_READY_SELECTOR, $AUTH_READY_SELECTOR"
     CURRENT_URL="$(agent-browser get url)"
     if [[ "$CURRENT_URL" != *"login"* ]] && [[ "$CURRENT_URL" != *"signin"* ]]; then
       echo "Session restored successfully"
@@ -30,8 +34,7 @@ fi
 
 echo "Opening login page for discovery..."
 agent-browser open "$LOGIN_URL"
-# Set READY_SELECTOR to the element whose availability matters to this task.
-[[ -z "${READY_SELECTOR:-}" ]] || agent-browser wait "$READY_SELECTOR"
+agent-browser wait "$LOGIN_READY_SELECTOR"
 
 echo
 echo "Login form structure:"
