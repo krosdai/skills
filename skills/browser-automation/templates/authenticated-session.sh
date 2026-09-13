@@ -14,7 +14,7 @@ echo "Prefer the agent-browser auth vault when possible."
 if [[ -f "$STATE_FILE" ]]; then
   echo "Loading saved state from $STATE_FILE..."
   if agent-browser --state "$STATE_FILE" open "$LOGIN_URL" 2>/dev/null; then
-    agent-browser wait --load networkidle
+    [[ -z "${READY_SELECTOR:-}" ]] || agent-browser wait "$READY_SELECTOR"
     CURRENT_URL="$(agent-browser get url)"
     if [[ "$CURRENT_URL" != *"login"* ]] && [[ "$CURRENT_URL" != *"signin"* ]]; then
       echo "Session restored successfully"
@@ -30,7 +30,8 @@ fi
 
 echo "Opening login page for discovery..."
 agent-browser open "$LOGIN_URL"
-agent-browser wait --load networkidle
+# Set READY_SELECTOR to the element whose availability matters to this task.
+[[ -z "${READY_SELECTOR:-}" ]] || agent-browser wait "$READY_SELECTOR"
 
 echo
 echo "Login form structure:"
@@ -51,12 +52,12 @@ exit 0
 # : "${APP_USERNAME:?Set APP_USERNAME}"
 # : "${APP_PASSWORD:?Set APP_PASSWORD}"
 # agent-browser open "$LOGIN_URL"
-# agent-browser wait --load networkidle
+# agent-browser wait "#expected-result"  # customize for this page
 # agent-browser snapshot -i
 # agent-browser fill @e1 "$APP_USERNAME"
 # agent-browser fill @e2 "$APP_PASSWORD"
 # agent-browser click @e3
-# agent-browser wait --load networkidle
+# agent-browser wait "#expected-result"  # customize for this page
 # FINAL_URL="$(agent-browser get url)"
 # if [[ "$FINAL_URL" == *"login"* ]] || [[ "$FINAL_URL" == *"signin"* ]]; then
 #   echo "Login failed"

@@ -12,7 +12,8 @@ echo "Capturing: $TARGET_URL"
 mkdir -p "$OUTPUT_DIR"
 
 agent-browser open "$TARGET_URL"
-agent-browser wait --load networkidle
+# Set READY_SELECTOR to the element whose availability matters to this task.
+[[ -z "${READY_SELECTOR:-}" ]] || agent-browser wait "$READY_SELECTOR"
 
 TITLE="$(agent-browser get title)"
 URL="$(agent-browser get url)"

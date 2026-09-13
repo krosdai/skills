@@ -10,7 +10,8 @@ FORM_URL="${1:?Usage: $0 <form-url>}"
 echo "Form automation: $FORM_URL"
 
 agent-browser open "$FORM_URL"
-agent-browser wait --load networkidle
+# Set READY_SELECTOR to the element whose availability matters to this task.
+[[ -z "${READY_SELECTOR:-}" ]] || agent-browser wait "$READY_SELECTOR"
 
 echo
 echo "Form structure:"
@@ -26,7 +27,7 @@ agent-browser snapshot -i
 # agent-browser click @e6
 
 # Wait for submission or redirect when needed.
-# agent-browser wait --load networkidle
+# agent-browser wait "#expected-result"  # customize for this page
 # agent-browser wait --url "**/success"
 
 echo

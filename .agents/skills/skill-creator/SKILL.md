@@ -6,7 +6,12 @@ license: Complete terms in LICENSE.txt
 
 # Skill Creator
 
-This skill provides guidance for creating effective skills.
+This bundled third-party skill includes local adaptations for scoped updates,
+optional packaging, and consistent frontmatter guidance. Its original license
+remains in `LICENSE.txt`.
+
+Create or update skills within the user's requested scope. A focused update needs
+only the relevant edits and checks; it need not repeat discovery or packaging.
 
 ## About Skills
 
@@ -211,11 +216,14 @@ Skill creation involves these steps:
 5. Package the skill (run package_skill.py)
 6. Iterate based on real usage
 
-Follow these steps in order, skipping only if there is a clear reason why they are not applicable.
+Choose the steps that serve the task. For an existing skill with clear requirements,
+edit and validate directly. Initialize only new skills, and package only when a
+distributable `.skill` archive is needed.
 
 ### Step 1: Understanding the Skill with Concrete Examples
 
-Skip this step only when the skill's usage patterns are already clearly understood. It remains valuable even when working with an existing skill.
+Use existing context and realistic examples to understand the intended usage. Ask
+only when missing information would materially change the skill's behavior.
 
 To create an effective skill, clearly understand concrete examples of how the skill will be used. This understanding can come from either direct user examples or generated examples that are validated with user feedback.
 
@@ -260,7 +268,7 @@ At this point, it is time to actually create the skill.
 
 Skip this step only if the skill being developed already exists, and iteration or packaging is needed. In this case, continue to the next step.
 
-When creating a new skill from scratch, always run the `init_skill.py` script. The script conveniently generates a new template skill directory that automatically includes everything a skill requires, making the skill creation process much more efficient and reliable.
+When creating a new skill from scratch, use `init_skill.py` when its scaffold helps. The script conveniently generates a new template skill directory that automatically includes everything a skill requires, making the skill creation process much more efficient and reliable.
 
 Usage:
 
@@ -308,11 +316,14 @@ Write the YAML frontmatter with `name` and `description`:
 
 - `name`: The skill name
 - `description`: This is the primary triggering mechanism for your skill, and helps Claude understand when to use the skill.
-  - Include both what the Skill does and specific triggers/contexts for when to use it.
+  - Briefly state the capability and its actual trigger; preserve exclusions that prevent likely misrouting.
+  - Put workflow steps, parameters, and examples in the body or supporting references.
   - Include all "when to use" information here - Not in the body. The body is only loaded after triggering, so "When to Use This Skill" sections in the body are not helpful to Claude.
   - Example description for a `docx` skill: "Comprehensive document creation, editing, and analysis with support for tracked changes, comments, formatting preservation, and text extraction. Use when Claude needs to work with professional documents (.docx files) for: (1) Creating new documents, (2) Modifying or editing content, (3) Working with tracked changes, (4) Adding comments, or any other document tasks"
 
-Do not include any other fields in YAML frontmatter.
+Preserve supported optional fields when useful: `license`, `allowed-tools`,
+`metadata`, and `compatibility`. Keep the field rules consistent with
+`scripts/quick_validate.py`; do not remove valid metadata just to simplify the header.
 
 ##### Body
 
@@ -320,7 +331,10 @@ Write instructions for using the skill and its bundled resources.
 
 ### Step 5: Packaging a Skill
 
-Once development of the skill is complete, it must be packaged into a distributable .skill file that gets shared with the user. The packaging process automatically validates the skill first to ensure it meets all requirements:
+For a repository update, completion means the requested edits and applicable
+checks are done. Run `scripts/quick_validate.py <path/to/skill-folder>` for metadata
+validation. Create a distributable `.skill` archive only when requested or required
+by the delivery channel. Packaging also validates the skill first:
 
 ```bash
 scripts/package_skill.py <path/to/skill-folder>
