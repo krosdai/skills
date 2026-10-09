@@ -46,6 +46,7 @@ Closes #42
 
 ## Safety
 
-Don't change git config, run destructive commands, or bypass hooks unless asked. A failed
-hook means no commit was made: fix the cause and commit again rather than `--amend`, which
-would rewrite the previous commit.
+Don't change git config, run destructive commands, or bypass hooks unless asked. When a
+`pre-commit` or `commit-msg` hook rejects the commit, nothing was committed: fix the cause
+and commit again rather than `--amend`, which would rewrite the previous commit. A
+`post-commit` hook runs after the commit exists, so check `git log -1` before retrying.
