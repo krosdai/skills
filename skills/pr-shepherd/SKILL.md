@@ -29,12 +29,15 @@ local cleanup on their machine.
 
 ## The loop
 
-Cap **repair rounds** at 5; waiting consumes none. Carry the PR, head SHA, last verdict,
-repair count, and time of last meaningful progress across wait calls. A wait timeout
-returns control; it neither revokes an authorized shepherd task nor by itself requires
-human approval. Continue while work or CI is progressing. Judge stalled checks against the
-expected CI duration and any task deadline instead of blindly restarting wait budgets, and
-escalate an actionable human blocker or persistent lack of progress with the saved state.
+Track repair rounds (cap **5**), waiting, and task authorization separately; waiting
+consumes no repair round. Carry the PR, head SHA, last verdict, repair count, and time of
+last meaningful progress across wait calls. A wait timeout returns control; it neither
+revokes an authorized shepherd task nor by itself requires human approval. Continue only
+while the task remains authorized and work or CI is progressing; if the user cancels or
+narrows the task, stop or reconfirm before acting on a later GREEN. Judge stalled checks
+against the expected CI duration and any task deadline instead of blindly restarting wait
+budgets, and escalate an actionable human blocker or persistent lack of progress with the
+saved state.
 
 1. **Read the gate:** `scripts/pr_status.sh <PR>`. Its JSON and exit code are the single
    source of truth; never infer green from `gh pr checks` or the web UI.
@@ -98,10 +101,13 @@ between iterations.
 
 1. **Method:** the user's preference; otherwise the first allowed of merge → squash →
    rebase (§7).
-2. **Merge:** `gh pr merge <PR> --merge` (or the chosen method).
-3. **Remote branch:** delete it (§8) unless it is long-lived — `main`, `master`, `develop`,
-   `dev`, `staging`, `production`, `release/*`, `hotfix/*`, `support/*`, any protected
-   branch, or one on the user's keep-list. If unsure, ask.
+2. **Merge:** `gh pr merge <PR> --merge` (or the chosen method). A merge queue may only
+   enqueue the PR, so confirm its state is `MERGED` and note the merge commit before any
+   cleanup.
+3. **Remote branch:** delete it (§8) unless it is long-lived: the default branch or any
+   integration branch (e.g. `main`, `master`, `develop`, `dev`, `staging`, `production`),
+   `release/*`, `hotfix/*`, `support/*`, any protected branch, or one on the user's
+   keep-list. If unsure, ask.
 4. **Local cleanup** (local runs only), from the primary worktree, never the one being
    removed (§9): remove the head's worktree if it has one, `git branch -D` the head branch
    (squash and rebase merges look unmerged to git), switch to the base branch,

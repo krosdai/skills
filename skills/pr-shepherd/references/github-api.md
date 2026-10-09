@@ -84,8 +84,14 @@ gh api repos/OWNER/REPO \
 
 ```bash
 gh pr merge <PR> --merge                                    # or --squash / --rebase
-gh api -X DELETE repos/OWNER/REPO/git/refs/heads/HEAD_REF   # skip for long-lived branches
+gh pr view <PR> --json state,mergeCommit,isCrossRepository,headRepositoryOwner,headRepository
+gh api -X DELETE repos/HEAD_OWNER/HEAD_REPO/git/refs/heads/HEAD_REF   # skip for long-lived branches
 ```
+
+Delete only once `state` is `MERGED`: with a merge queue, `gh pr merge` can return after
+merely enqueueing the PR. The head ref lives in the head repository, which differs from
+the base for a fork PR (`isCrossRepository`); if you can't write there, skip the deletion
+rather than removing a same-named branch from the base repository.
 
 `gh pr merge --delete-branch` also tries to delete the local branch, which fails or
 misbehaves when that branch is checked out in a worktree. In worktree flows, merge without
@@ -102,7 +108,8 @@ git -C <primary> pull --ff-only origin main
 git -C <primary> worktree prune
 ```
 
-`-D` is safe here because the verdict already confirmed the merge.
+`-D` is safe here because §8 confirmed the PR is `MERGED`; a GREEN verdict alone only
+proves it was ready to merge.
 
 ## 10. State values
 
@@ -130,7 +137,7 @@ endpoint, smee, or ngrok is needed:
 ```bash
 gh extension install cli/gh-webhook
 gh webhook forward --repo=OWNER/REPO \
-  --events=check_run,check_suite,status,pull_request_review,pull_request_review_thread,workflow_run \
+  --events=pull_request,check_run,check_suite,status,pull_request_review,pull_request_review_thread,workflow_run \
   --url=http://localhost:PORT/hook    # a minimal local receiver
 ```
 
