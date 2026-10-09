@@ -51,6 +51,4 @@ When adding a new self-authored skill, create it under `skills/<name>/` and syml
   PR/video helpers, also run
   `python -m unittest discover -s tests -v`. The tests use disposable fixtures and
   a loopback HTTP server with no production access.
-- Manus client tests run with `node --test skills/manus/scripts/manus_client.test.mjs`
-  and `uv run --no-project --with httpx python -m unittest discover -s skills/manus/scripts -p test_manus_client.py`.
 - AutoCorrect is only available through `mise` (invoked as `mise run autocorrect:fix` or `mise x -- autocorrect`), not on `PATH` directly. `mise` needs the repo trusted once via `mise trust` before it will read `mise.toml`.
