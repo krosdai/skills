@@ -41,9 +41,9 @@ RUN corepack enable
 # download. The binary is selected per host architecture (amd64/arm64) so the
 # image works regardless of build platform. Update MISE_VERSION and both
 # checksums together (published in the release's SHASUMS256.txt).
-ARG MISE_VERSION=v2026.8.5
-ARG MISE_SHA256_X64=ee362b6d96c648e27325a8bc7ee866bde4fffc20c88c777c5eb5c3b5c6f3e226
-ARG MISE_SHA256_ARM64=d2bde76b1f87ab50b6f456e05332bb02de56a6bf3c5d19343cc3661e5d294681
+ARG MISE_VERSION=v2026.10.4
+ARG MISE_SHA256_X64=2b8ce21f550872807bcaabf45b6bc5c64bfbd6dc3bf49dd4e67de700ef3ceb75
+ARG MISE_SHA256_ARM64=9013ce1d7d9bbbf65254cda178562f5450c474a705907c18b77e6b678bb10041
 RUN set -eux; \
     case "$(dpkg --print-architecture)" in \
         amd64) mise_arch=x64; mise_sha256="${MISE_SHA256_X64}" ;; \
