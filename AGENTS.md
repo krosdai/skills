@@ -48,7 +48,7 @@ When adding a new self-authored skill, create it under `skills/<name>/` and syml
 
 - This repo requires Node `>=24` (`package.json` `engines`); Cursor's default image ships Node 22. The committed `.cursor/` environment (Node 24 image + Corepack pnpm + `git-lfs` + `mise`) provides the correct toolchain and installs Python, jq, and procps for the offline regression suite. For local setup, follow the `mise install` + `pnpm install --frozen-lockfile` flow in `README.md`.
 - `pnpm lint` checks formatting and JavaScript/TypeScript lint rules. When changing
-  PR/video helpers or browser readiness templates, also run
+  PR/video helpers, also run
   `python -m unittest discover -s tests -v`. The tests use disposable fixtures and
   a loopback HTTP server with no production access.
 - AutoCorrect is only available through `mise` (invoked as `mise run autocorrect:fix` or `mise x -- autocorrect`), not on `PATH` directly. `mise` needs the repo trusted once via `mise trust` before it will read `mise.toml`.
